@@ -1,0 +1,29 @@
+House Rank,Capacity,Vision Radius,Build Capacity,Build Time,Build Priority,Birth Rate,Breeder Count,Collectable Belief,Max Belief,Belief Modifier,Belief Multiplier Per Peep In House,Unit ID,New Builder Contribution
+Shelter,2,12,1,15,0.0825,20,1,50,60,0,1.1067,0:1,0.5
+Coastal Hut,2,12.8,1,45,0.25,30,2,100,200,0,1.1487,0:2,0.5
+Coastal Shack,5,9,5,900,0.3,default,default,default,default,default,default,0:3,default
+Coastal House,8.700001,10,7.25,10000,0.35,default,default,default,default,default,default,0:4,default
+Grass Hut,3,12.8,3,300,0.25,20,1,50,60,0.04,1.1067,1:1,0.5
+Grass Shack,5,9,5,600,0.3,30,2,100,200,0.1,1.1487,1:2,0.5
+Grass House,8.700001,10,7.25,12000,0.35,100,3,200,400,0.0245,1.1224,1:3,0.6
+Grass Cottage,10.5,11,10.15,18000,0.4,100,4,400,600,0.0347,1.0595,1:4,0.6
+Grass Home,13.5,12,10,28800,0.45,100,5,1000,2000,0.0463,1.0353,1:5,0.7
+Mountain Hut,12,10,10,16000,0.35,450,3,40,60,0.0225,1.1067,3:1,0.5
+Mountain Cottage,14,11,10.15,24000,0.4,300,5,180,270,0.03525,1,3:2,0.5
+Mountain House,18,12,10,38400,0.45,225,7,600,900,0.03675,1,3:3,0.6
+Mountain Manor,22,13,10,76800,0.5,180,9,750,1500,0.05205,1,3:4,0.6
+Fortified Hut,2,8,1,1500,0.25,default,default,default,default,default,default,2:1,default
+Fortified Shack,5,9,5,3000,0.3,default,default,default,default,default,default,2:2,default
+Fortified Cottage,8.700001,10,7.25,10000,0.35,default,default,default,default,default,default,2:3,default
+Fortified House,14,11,10.15,15000,0.4,560,11,2000,4000,0.0347,1.0595,2:4,0.6
+Fortified Home,18,12,10,24000,0.45,700,19,12000,20000,0.0463,1.0353,2:5,0.7
+Fortified Manor,22,13,10,48000,0.5,1000,29,20000,100000,0.0579,1.0233,2:6,0.8
+Manor,7,23,6,43200,default,100,6,10000,20000,0.0579,1.0233,1:6,0.8
+Farmhouse,14,21,11,12500,default,150,11,18000,30000,0.06945,1,3:5,0.7
+Manor,16,23,13,54000,default,129,13,30000,150000,0.08685,1,3:6,0.8
+Small Wheat Field,1,15,1,20,default,200,0,40,1,0.0016666667,2,4:1,0.5
+Wheat Field,2,16,1,40,default,4000,1,180,270,1,1.3,4:2,0.5
+Medium Wheat Field,3,17,2,60,default,4000,2,600,900,1,1.3,4:3,0.6
+Large Wheat Field,4,19,3,80,default,4000,3,750,1500,1,1.3,4:4,0.6
+Huge Wheat Field,5,21,4,100,default,4000,4,18000,30000,1,1.3,4:5,0.7
+Wheat Plain,6,23,5,120,default,4000,5,30000,150000,1,1.3,4:6,0.8

@@ -1,0 +1,11 @@
+{
+  "assets": [
+    {"path": "sprites/TerrainDif1.tga", "role": "terrain diffuse candidate"},
+    {"path": "sprites/TerrainDif2.tga", "role": "terrain diffuse candidate"},
+    {"path": "sprites/landscapeDiffuse.png", "role": "landscape palette candidate"},
+    {"path": "sprites/pack_treeImposters_v2.png", "role": "vegetation atlas", "dependencies": ["sprites/pack_treeImposters_v2.png.dat (unresolved atlas metadata)"]},
+    {"path": "sprites/Belief_bar.png", "role": "belief UI"},
+    {"path": "sprites/plotTexture.png", "role": "building plot texture"},
+    {"path": "SoundBanks/Mac/Audio_commentary/02_Sculpting_card.mp3", "role": "audio import sample: sculpting commentary"}
+  ]
+}

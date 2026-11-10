@@ -1,0 +1,20 @@
+{
+  "authorization": "User explicitly requested Roboto Condensed everywhere. This is the font exception to source-only artwork.",
+  "files": [
+    {
+      "source": "/Users/christiantzurcanu/Library/Fonts/RobotoCondensed-Regular.ttf",
+      "path": "RobotoCondensed-Regular.ttf",
+      "sha256": "04d2424978ab93cd524970aff21200ec88358176992af718ecd9fe96be5ae4b8"
+    },
+    {
+      "source": "/Users/christiantzurcanu/Library/Fonts/RobotoCondensed-Bold.ttf",
+      "path": "RobotoCondensed-Bold.ttf",
+      "sha256": "14948aedbcaf906a9cacab38de5fff889bde887ecbd710b8a1ada3ae84c65477"
+    },
+    {
+      "source": "/Users/christiantzurcanu/Library/Fonts/RobotoCondensed-Italic.ttf",
+      "path": "RobotoCondensed-Italic.ttf",
+      "sha256": "32ad28ad4f1c63c851a73c3f6054c09de633747dbf9ad5418b9cd9a4eb2e18e9"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "logo": "dominus.png",
+  "logo_sha256": "ddbaca6781e6230616909b05f6aaf0287374f1df6a28c948c134178fc15bbf16",
+  "font": "fonts/RobotoCondensed-Regular.ttf",
+  "font_sha256": "04d2424978ab93cd524970aff21200ec88358176992af718ecd9fe96be5ae4b8",
+  "font_provenance": "fonts/provenance.json",
+  "text": "Dominus",
+  "conversion": "Startup UI layout: supplied logo and existing game font on white.",
+  "output": "dominus-splash.png",
+  "output_sha256": "c0dbef975b2da0ce2c979d18264db080d72d0c0cc0be548bba2f1bb0f3f500fa"
+}

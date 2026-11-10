@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "url": "https://archive.org/download/godus2_4.7z/godus2_4.7z",
+  "bytes": 472291771,
+  "sha1": "4e3fafd65ac04394c932b5ef7e99d66ef7da9220",
+  "required": ["godus.s86", "received/godussteamrel/balance.datz", "follower.group.bin", "stream/Homeworld.pack"]
+}

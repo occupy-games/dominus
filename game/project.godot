@@ -1,0 +1,66 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Dominus"
+run/main_scene="res://application/startup.tscn"
+config/features=PackedStringArray("4.8", "GL Compatibility")
+config/icon="res://assets/dominus.png"
+config/macos_native_icon="res://assets/dominus.icns"
+boot_splash/image="res://assets/dominus-splash.png"
+boot_splash/bg_color=Color(1, 1, 1, 1)
+boot_splash/stretch_mode=1
+
+[display]
+
+window/size/viewport_width=1200
+window/size/viewport_height=800
+window/size/window_width_override=1200
+window/size/window_height_override=800
+window/stretch/mode="canvas_items"
+window/size/min_width=1000
+window/size/min_height=680
+
+[gui]
+
+theme/custom_font="res://assets/fonts/RobotoCondensed-Regular.ttf"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+environment/defaults/default_clear_color=Color(1, 1, 1, 1)
+
+[shader_globals]
+
+god_influence_enabled={
+"type": "bool",
+"value": false
+}
+god_influence_regions={
+"type": "sampler2D",
+"value": "res://assets/extracted/sprites/colours_DNA.png"
+}
+god_influence_count={
+"type": "int",
+"value": 0
+}
+god_world_center={
+"type": "float",
+"value": 511.5
+}
+god_out_of_range={
+"type": "vec3",
+"value": Vector3(0.67, 0.79, 0.81)
+}
+god_influence_bounds={
+"type": "vec4",
+"value": Vector4(0, 0, 1024, 1024)
+}

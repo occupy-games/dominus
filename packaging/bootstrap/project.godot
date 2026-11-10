@@ -1,0 +1,16 @@
+config_version=5
+
+[application]
+config/name="Dominus"
+run/main_scene="res://setup.tscn"
+
+[display]
+window/size/viewport_width=700
+window/size/viewport_height=360
+window/size/resizable=false
+
+[gui]
+theme/custom_font="res://RobotoCondensed-Regular.ttf"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

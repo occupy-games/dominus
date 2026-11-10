@@ -1,0 +1,5 @@
+Race,MaxHealth,RouteSpeed,Vision,Stamina,Strength,JobSkill,ReactionSkill,StaminaGainAtHome,StaminaGainSitting,MinReactionPriority,FireDamage,SwampDamage,DrownDamage,BlightedDamage,SwimDamage,StaminaDecay,Scale,FullScorchedSpeedMult,FullBeautifySpeedMult,BasketCapacity
+Brown Head,100,1.3,7,default,default,1,default,default,default,default,default,default,default,default,default,default,1,default,default,default
+Red Head,100,1.3,7,default,default,1,default,default,default,default,default,default,default,default,default,default,1,default,default,default
+Champion,100,1.3,7,default,default,1,default,default,default,default,default,default,default,default,default,default,1,default,default,default
+Astari,100,1.3,7,default,default,1,default,default,default,default,default,default,default,default,default,default,1,default,default,default

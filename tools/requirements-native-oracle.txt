@@ -1,0 +1,2 @@
+# Optional offline comparison only; never loaded by the game or normal tests.
+unicorn==2.1.4

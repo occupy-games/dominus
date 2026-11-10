@@ -1,0 +1,8 @@
+{
+  "source": "dominus.png",
+  "source_sha256": "ddbaca6781e6230616909b05f6aaf0287374f1df6a28c948c134178fc15bbf16",
+  "authorization": "User explicitly supplied this logo for Dominus branding, game icon and start buttons on 2026-11-09.",
+  "conversion": "sips resizes to standard macOS icon dimensions; iconutil packages unchanged artwork and transparency.",
+  "native_icon": "dominus.icns",
+  "native_icon_sha256": "a7d8c089b08c6372bfb9b0b78f55386134efc9f6aa4ab4e6cb32717ff50fa7d3"
+}

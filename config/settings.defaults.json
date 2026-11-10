@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "groups": {
+    "audio": {
+      "label": "Audio",
+      "settings": {
+        "music_enabled": {
+          "label": "Music",
+          "type": "bool",
+          "default": true
+        },
+        "effects_enabled": {
+          "label": "Sound effects",
+          "type": "bool",
+          "default": true
+        },
+        "music_db": {
+          "label": "Music volume (dB)",
+          "type": "number",
+          "default": -19,
+          "min": -60,
+          "max": 0,
+          "step": 1
+        },
+        "effects_db": {
+          "label": "Effects volume (dB)",
+          "type": "number",
+          "default": -15,
+          "min": -60,
+          "max": 0,
+          "step": 1
+        }
+      }
+    },
+    "camera": {
+      "label": "Camera and trackpad",
+      "settings": {
+        "pinch_sensitivity": {
+          "label": "Pinch sensitivity",
+          "type": "number",
+          "default": 0.1,
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "wheel_sensitivity": {
+          "label": "Wheel sensitivity",
+          "type": "number",
+          "default": 0.1,
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "pan_speed": {
+          "label": "Trackpad pan speed",
+          "type": "number",
+          "default": 1,
+          "min": 0.1,
+          "max": 5,
+          "step": 0.1
+        },
+        "reverse_horizontal": {
+          "label": "Reverse horizontal trackpad",
+          "type": "bool",
+          "default": true
+        },
+        "orbit_speed": {
+          "label": "Orbit and tilt speed",
+          "type": "number",
+          "default": 1,
+          "min": 0.1,
+          "max": 5,
+          "step": 0.1
+        },
+        "keyboard_speed": {
+          "label": "Keyboard pan speed",
+          "type": "number",
+          "default": 1,
+          "min": 0.1,
+          "max": 5,
+          "step": 0.1
+        }
+      }
+    },
+    "display": {
+      "label": "Display",
+      "settings": {
+        "fullscreen": {
+          "label": "Fullscreen",
+          "type": "bool",
+          "default": false
+        },
+        "vsync": {
+          "label": "VSync",
+          "type": "bool",
+          "default": true
+        },
+        "msaa": {
+          "label": "Antialiasing",
+          "type": "enum",
+          "default": 0,
+          "choices": [
+            "Disabled",
+            "2x",
+            "4x",
+            "8x"
+          ]
+        },
+        "max_fps": {
+          "label": "Frame limit (0 = unlimited)",
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 360,
+          "step": 1
+        },
+        "shadows": {
+          "label": "Dynamic shadows",
+          "type": "bool",
+          "default": false
+        }
+      }
+    },
+    "gameplay": {
+      "label": "Game",
+      "settings": {
+        "speed": {
+          "label": "Game speed",
+          "type": "number",
+          "default": 1,
+          "min": 0.25,
+          "max": 10,
+          "step": 0.25
+        },
+        "pause_on_focus_loss": {
+          "label": "Pause when window loses focus",
+          "type": "bool",
+          "default": false
+        }
+      }
+    },
+    "interface": {
+      "label": "Interface",
+      "settings": {
+        "text_scale": {
+          "label": "Text size",
+          "type": "number",
+          "default": 1,
+          "min": 0.8,
+          "max": 1.4,
+          "step": 0.1
+        },
+        "tooltip_delay": {
+          "label": "Tooltip delay (seconds)",
+          "type": "number",
+          "default": 0.4,
+          "min": 0.1,
+          "max": 3,
+          "step": 0.1
+        }
+      }
+    },
+    "visuals": {
+      "label": "World appearance",
+      "settings": {
+        "light_r": {
+          "label": "Sunlight R",
+          "type": "number",
+          "default": 0.45,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "light_g": {
+          "label": "Sunlight G",
+          "type": "number",
+          "default": 0.45,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "light_b": {
+          "label": "Sunlight B",
+          "type": "number",
+          "default": 0.45,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "ambient_r": {
+          "label": "Ambient light R",
+          "type": "number",
+          "default": 0.9,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "ambient_g": {
+          "label": "Ambient light G",
+          "type": "number",
+          "default": 0.9,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "ambient_b": {
+          "label": "Ambient light B",
+          "type": "number",
+          "default": 0.9,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "background_r": {
+          "label": "Background R",
+          "type": "number",
+          "default": 0.054,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "background_g": {
+          "label": "Background G",
+          "type": "number",
+          "default": 0.157,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "background_b": {
+          "label": "Background B",
+          "type": "number",
+          "default": 0.187,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "outside_r": {
+          "label": "Outside influence R",
+          "type": "number",
+          "default": 0.67,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "outside_g": {
+          "label": "Outside influence G",
+          "type": "number",
+          "default": 0.79,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        "outside_b": {
+          "label": "Outside influence B",
+          "type": "number",
+          "default": 0.81,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        }
+      }
+    }
+  }
+}
