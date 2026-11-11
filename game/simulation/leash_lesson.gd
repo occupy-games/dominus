@@ -3,6 +3,7 @@ extends RefCounted
 
 const Progression = preload("res://simulation/progression.gd")
 const Immutable = preload("res://simulation/immutable_data.gd")
+const Leash = preload("res://simulation/campaign_leash.gd")
 
 const INTRO := 0
 const FIRST_FOLLOWER := 1
@@ -190,6 +191,7 @@ static func apply(world: RefCounted,state: Dictionary,command: Dictionary,plan: 
 			agent.erase("indoors_home")
 			agent.merge({"job":destination,"state":"walking","path":assignment["path"].duplicate(),
 				"work_x":target.x,"work_z":target.y,"leash_route_speed":2.0 if stage!=GROUP else 0.0},true)
+			Leash.remember_drop(agent,Vector2(command["x"],command["z"]))
 			break
 
 

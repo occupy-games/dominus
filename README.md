@@ -6,7 +6,7 @@ progression are separate from rendering, UI and audio; see
 
 ## Install
 
-Open `dist/Dominus-0.1.0-arm64.pkg`. It installs **Dominus.app** in Applications.
+Open `dist/Dominus-0.1.1-arm64.pkg`. It installs **Dominus.app** in Applications.
 The installer contains application code and its runtime dependencies, without
 external game artwork, models, animation, maps, music or sound effects.
 
@@ -33,6 +33,9 @@ This bundled-tool build requires Apple Silicon and macOS 27.2 or newer.
 - Drag terrace edges to extend or shrink terrain layers.
 - Click a home once to collect its belief. Once BeliefLeashing is unlocked,
   hold and drag across other homes to collect from them too.
+- Once Leashing is unlocked, hold a follower until the leash appears, then
+  drag to land and release. The leash stays pinned there while the follower
+  walks or waits for a route.
 - The top-left collection shows advances and resource cards. Select an advance
   to see compatible resources, then drag a resource onto its portrait.
   Buried chests and adventure rewards supply resources.

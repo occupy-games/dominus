@@ -280,7 +280,7 @@ func credit_gems(handle: int,amount: int) -> void:
 static func pack_id(definition: Dictionary,reward: String) -> int:
 	if not definition.has("authored_pack_chests") or not reward.begins_with("Pack_"): return 0
 	for pack: Dictionary in definition["reward_catalog"]["records"]["packs"]:
-		if pack["name"]==reward: return int(pack["id"])
+		if pack.get("name")==reward: return int(pack["id"])
 	return 0
 
 
@@ -304,7 +304,7 @@ func grant_pack(opening: Dictionary,handle: int,pack: int,source_id: int,flags: 
 	var records := reward_records(definition)
 	var dispatch := dispatch_state(opening)
 	var gem: int=definition["reward_queue_rules"]["gem_sticker"]
-	var selectors: Dictionary=definition["bound_sticker_selection_rules"]["kinds"]
+	var selectors: Dictionary=definition.get("bound_sticker_selection_rules",{}).get("kinds",{})
 	var route := func(name: String,args: Array) -> Variant:
 		match name:
 			"card_acquired":

@@ -7,7 +7,7 @@ import unittest
 
 from tools.current_cards import decode_archive
 from tools.native_scenery_oracle import NativeImage
-from tools.scenery_layout import compile_layout, source_types
+from tools.scenery_layout import compile_layout, generate_layout, source_types
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT/'data/godus2_4'
@@ -68,3 +68,13 @@ class SourceSceneryTests(unittest.TestCase):
             capture['executable_sha256']=self.metadata['executable_sha256']
             capture['configuration']['loc2Start']='23'
             with self.assertRaisesRegex(ValueError,'balance'): compile_layout(capture,SOURCE,Path(directory))
+
+    def test_setup_regenerates_the_complete_native_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            metadata = generate_layout(SOURCE, output, field_directory=DIRECTORY)
+            payload = (output / 'homeworld6-scenery.bin').read_bytes()
+        self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                         '9c354f0d7708a97914678509f43061ddd3eba29cd2fa0c465fbc4f4937780a01')
+        self.assertEqual(payload, self.payload)
+        self.assertEqual(metadata['source_fields'], self.metadata['source_fields'])

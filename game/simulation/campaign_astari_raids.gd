@@ -158,7 +158,7 @@ static func advance_archer(world: RefCounted,archer: Dictionary,followers: Dicti
 		if target.is_empty() or target_score(world,archer,target,vision,rules)<=0:
 			archer.merge({"shot_stage":0,"target":0,"state":"idle","path":[]},true)
 			return
-		if not archer["path"].is_empty() and world.raid_step_valid(archer,int(rules["max_steps"])):
+		if not archer["path"].is_empty() and world.route_step_valid(archer,int(rules["max_steps"])):
 			move_archer(world,archer,rules)
 			return
 		archer["path"].clear()
@@ -202,7 +202,7 @@ static func scout(world: RefCounted,archer: Dictionary,rules: Dictionary,random:
 		if tick<int(archer["scout_until"]): return
 		archer["scout_until"]=0
 	var revision: Array=world.raid_route_revision()
-	if not archer["path"].is_empty() and not world.raid_step_valid(archer,int(rules["max_steps"])):
+	if not archer["path"].is_empty() and not world.route_step_valid(archer,int(rules["max_steps"])):
 		archer["path"].clear()
 		archer.erase("route_revision")
 	if archer["path"].is_empty():

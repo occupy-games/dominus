@@ -32,10 +32,14 @@ static func bounds(site: Dictionary,rules: Dictionary) -> Rect2i:
 	return Rect2i(x0,z0,x1-x0,z1-z0)
 
 
+static func clearance_threshold(site: Dictionary,rules: Dictionary) -> float:
+	return Terrain.f32(float(site["height"])/float(rules["height_scale"]))+float(rules["clearance"])
+
+
 static func count(site: Dictionary,rules: Dictionary,ground: Callable) -> int:
 	if not valid(site) or not valid_rules(rules) or not ground.is_valid(): return -1
 	var region := bounds(site,rules)
-	var threshold := Terrain.f32(float(site["height"])/float(rules["height_scale"]))+float(rules["clearance"])
+	var threshold := clearance_threshold(site,rules)
 	var result := 0
 	for z in range(region.position.y,region.end.y):
 		for x in range(region.position.x,region.end.x):

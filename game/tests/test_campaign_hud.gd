@@ -38,6 +38,7 @@ func run() -> void:
 	screen.campaign_mode = true
 	screen.hud_textures = preload("res://infrastructure/ui_content.gd").textures()
 	screen.campaign_cards = preload("res://infrastructure/campaign_content.gd").card_assets()
+	screen.power_assets = preload("res://infrastructure/progression_content.gd").power_assets(preload("res://infrastructure/campaign_content.gd").homeworld())
 	screen.inspect_action=func(_command: Dictionary) -> Dictionary: return {"ok":true}
 	root.add_child(screen)
 	screen.apply_snapshot(state)
@@ -121,7 +122,14 @@ func run() -> void:
 	check("Capacity: 4" in visible_text(screen.powers_panel),"Power details must explain its capacity and cost")
 	screen.powers_panel.open_card("Card_GodPower_Beautify")
 	check(screen.powers_panel.selected=="Card_GodPower_Beautify","Power gallery must support each selection")
-	screen.powers_panel.hide()
+	state["progression"]["powers"].append("GodPower_Totem")
+	screen.original_hud.apply_snapshot(state)
+	var move_totem: TextureButton=screen.original_hud.power_nodes["GodPower_Totem"]
+	check(move_totem.visible,"The original Move Totem shortcut must be available when unlocked")
+	move_totem.pressed.emit()
+	check(screen.tool=="GodPower_Totem" and not screen.powers_panel.visible,"Move Totem must arm placement directly from the HUD")
+	screen.apply_snapshot(state,[{"type":"use_power","power":"GodPower_Totem"}])
+	check(screen.tool=="sculpt","Placing the totem must restore regular sculpt and leash input")
 	# Presentation must remove a used chest immediately and never respawn it.
 	var chest_node := Node3D.new()
 	screen.world_view.add_child(chest_node)

@@ -21,9 +21,9 @@ failure hook identifies the coastal free-sculpt band.
 
 ## Implemented portion
 
-Choose **Campaigns → Homeworld6** in the main menu. The selection screen shows
-the current playable endpoint. The same opening can be launched from the
-project root with
+First-launch content setup prepares Homeworld6 from the supplied archive. Choose
+**Campaigns → Homeworld6** in the main menu. The same opening can be launched
+from the project root with
 
 ```
 /Applications/Godot.app/Contents/MacOS/Godot --path game -- --homeworld6-opening
@@ -63,6 +63,10 @@ voyage selection from the Dock. Excavate buried sticker chests and complete
 the Wooden Lodge cards with compatible stickers to build at higher elevations.
 Release nearby Builders or leash them to later Beacons of Expansion, then
 claim the card over each repaired site to expand the original influence areas.
+Shrine repair and Ark boarding share reachable approaches when the group needs
+more entry points than the terrain provides. Repair still counts every Builder
+against the authored crew limit, and boarding reserves a berth while each
+passenger walks to the Ark.
 At 165 followers, open and dismiss the Farming card. Collect 3,000 belief and
 select the Farming Settlement power. Drag the placement ring over completed
 homes, then press Preview and Squish it! Click the settlement to release a
@@ -327,6 +331,11 @@ opening-region runs with all cells loaded and with mathematically zero-density
 cells skipped produced identical 102-object results. The call harness invalidates
 its translated immediate arguments between calls; distinct probe calls verify it
 does not reuse stale coordinates.
+
+Content setup now generates these placements with the translated source kernel.
+The 4,203 records match the independent native capture byte for byte. The same
+setup generates all 4,864 plot growth and repair decisions from the original
+branches, matching the native results for every footprint predicate combination.
 
 `homeworld6-scenery.bin` stores the 4,203 records in 117,696 bytes. Its manifest
 retains input hashes, original native instruction bytes and all 27 source model
@@ -925,6 +934,12 @@ and removes the actor after the source disappearance timer. The consumed source
 ID, capacity counters and exact float32 phase timer persist through SQLite.
 Rendering and picking receive detached chest snapshots. The typed research query
 verifies that this sticker fits New Age Shelters.
+
+The ten Homeworld6 `Pack_Gems_5` sites retain their source coordinates and burial
+depths. They use the original pack table and credit five gems at the first pack
+entry after the opening timer. An older save reserves the new authored handles
+after its existing roster and moves any colliding storm handles while preserving
+their serials, opening timers and claimed chest history.
 
 The recovered Timeline stages retain their localized explanations and GUI
 targets, the source input locks and the original callbacks for opening,

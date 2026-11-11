@@ -98,6 +98,9 @@ var leash_active := false
 var leash_line: Line2D
 var leash_prompt_id := -1
 var leash_click: Dictionary = {}
+var leash_request_id := 0
+var pending_leash_pins: Dictionary = {}
+var pinned_leash_lines: Dictionary = {}
 const FARM_POWER := "GodPower_PlaceSettlement_2"
 const BUILDER_POWER := "GodPower_PlaceSettlement_1"
 const MINING_POWER := "GodPower_PlaceSettlement_3"
@@ -335,7 +338,11 @@ func build_campaign_hud() -> void:
 		powers_panel.hide())
 	hud.power_requested.connect(func(power: String) -> void:
 		if timeline_tutorial(snapshot): return
-		powers_panel.open_card("Card_"+power)
+		if power=="GodPower_Totem":
+			powers_panel.hide()
+			select_power(power)
+		else:
+			powers_panel.open_card("Card_"+power)
 		progression_panel.hide())
 	add_child(hud)
 	original_hud = hud
@@ -431,6 +438,9 @@ func apply_snapshot(data: Dictionary, events: Array = []) -> void:
 	var timeline_was_open: bool=snapshot.get("opening",{}).get("timeline_open",false)
 	snapshot = data
 	world_view.apply_snapshot(data)
+	for event: Dictionary in events:
+		if event.has("leash_request"): pending_leash_pins.erase(event["leash_request"])
+	update_pinned_leashes()
 	world_view.finger_preview=tool=="GodPower_FingerOfGod" and data.get("opening",{}).get("finger_status",{}).get("active",false)
 	audio.set_rain_active(rain_held and not is_paused and data.get("opening",{}).has("rain_cast"))
 	if has_building_selection(): update_home_info()
@@ -474,7 +484,7 @@ func apply_snapshot(data: Dictionary, events: Array = []) -> void:
 			elif event["type"]=="claim_card" and progression_panel.selected==event["card"] and not timeline_tutorial(data): progression_panel.visible=false
 			elif event["type"]=="use_power" and tool==event.get("power","") and tool.begins_with("GodPower_PlaceSettlement_"): choose_tool("sculpt")
 			elif event["type"]=="use_power" and tool=="GodPower_PlaceGiftFountain" and tool==event.get("power",""): choose_tool("sculpt")
-			elif event["type"]=="use_power" and tool in ["GodPower_PlaceBeliefCollect","GodPower_PlaceCapacity","GodPower_PlaceSpeed","GodPower_Swamp"] and tool==event.get("power",""): choose_tool("sculpt")
+			elif event["type"]=="use_power" and tool in ["GodPower_PlaceBeliefCollect","GodPower_PlaceCapacity","GodPower_PlaceSpeed","GodPower_Swamp","GodPower_Totem"] and tool==event.get("power",""): choose_tool("sculpt")
 			elif event["type"] in ["campaign_farm_confirm","campaign_builder_confirm","campaign_mining_confirm"]: choose_tool("sculpt")
 		return
 	population_label.text = "%d followers · %d sheep · %d%% happy" % [data["followers"].size(), data["sheep"].size(), data["happiness"]]
@@ -514,12 +524,15 @@ func update_home_info() -> void:
 		var collect := {"type":"collect_settlement","id":selected_home} if selected_building_kind=="settlement" else {"type":"collect","home_id":selected_home}
 		var can_voyage: bool=selected_building_kind=="temple" and snapshot.get("opening",{}).get("events_step",-1)>=0 and selected_home==snapshot["opening"]["definition"].get("dock_site_id") and info["complete"]
 		var ark_action: String=""
+		var finish: Dictionary={}
 		if not is_paused and inspect_action.is_valid():
+			if selected_building_kind in ["home","temple"] and snapshot.get("opening",{}).get("definition",{}).has("construction_gems"):
+				finish=inspect_action.call(finish_building_command())
 			if info.get("site_type")=="Wayland_Ark" and inspect_action.call({"type":"campaign_ark_sail","id":selected_home}).get("ok",false):
 				ark_action=snapshot["opening"]["definition"]["ark"]["sail_labels"]["button"]
 			elif info.get("kind")=="ark" and inspect_action.call({"type":"weyworld_release_ark","id":selected_home}).get("ok",false):
 				ark_action=building_info_labels.get("LOC_BUTTON_SETTLEMENT_ASSIGN_BUILDERS","Builders")
-		building_panel.present(info,art,selected_building_kind!="temple" and inspect_action.is_valid() and inspect_action.call(collect).get("ok",false),selected_building_kind=="home" and inspect_action.is_valid() and inspect_action.call({"type":"upgrade_home","id":selected_home}).get("ok",false),selected_building_kind=="temple" and not is_paused and inspect_action.is_valid() and inspect_action.call({"type":"repair_shrine","id":selected_home}).get("ok",false),can_voyage,ark_action)
+		building_panel.present(info,art,selected_building_kind!="temple" and inspect_action.is_valid() and inspect_action.call(collect).get("ok",false),selected_building_kind=="home" and inspect_action.is_valid() and inspect_action.call({"type":"upgrade_home","id":selected_home}).get("ok",false),selected_building_kind=="temple" and not is_paused and inspect_action.is_valid() and inspect_action.call({"type":"repair_shrine","id":selected_home}).get("ok",false),can_voyage,ark_action,finish)
 		return
 	for home: Dictionary in snapshot["homes"]:
 		if home["id"] == selected_home:
@@ -531,6 +544,9 @@ func update_home_info() -> void:
 
 func building_action(action: String) -> void:
 	if is_paused or not has_building_selection(): return
+	if action=="finish":
+		confirm_building_finish()
+		return
 	if action=="ark":
 		if selected_building_kind=="temple": confirm_ark_departure()
 		else: intent.emit({"type":"weyworld_release_ark","id":selected_home})
@@ -543,6 +559,30 @@ func building_action(action: String) -> void:
 		return
 	if action=="upgrade" and selected_building_kind=="home": intent.emit({"type":"upgrade_home","id":selected_home})
 	elif action=="collect": intent.emit({"type":"collect_settlement","id":selected_home} if selected_building_kind=="settlement" else {"type":"collect","home_id":selected_home})
+
+
+func finish_building_command() -> Dictionary:
+	return {"type":"campaign_finish_building","id":selected_home,"entity":selected_building_kind}
+
+
+func confirm_building_finish() -> void:
+	if not inspect_action.is_valid(): return
+	var command := finish_building_command()
+	var quote: Dictionary=inspect_action.call(command)
+	if not quote.get("ok",false): return
+	var labels: Dictionary=snapshot["opening"]["definition"]["construction_gems"]["labels"]
+	command["max_gems"]=quote["gems"]
+	var dialog:=ConfirmationDialog.new()
+	dialog.title=labels["title"]
+	dialog.dialog_text="%d %s"%[quote["gems"],labels["currency"]]
+	dialog.ok_button_text=quote["label"]
+	dialog.theme=theme
+	add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		if not is_paused: intent.emit(command)
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered()
 
 
 func confirm_ark_departure() -> void:
@@ -765,6 +805,9 @@ func act_on_world(cell: Vector2i,point: Vector2,shrine_cover: Dictionary) -> voi
 	if campaign_mode and snapshot.has("progression"):
 		if tool.begins_with("GodPower_"):
 			var command := {"type":"use_power","power":tool,"x":point.x,"z":point.y}
+			if tool=="GodPower_Totem":
+				command["x"]=cell.x
+				command["z"]=cell.y
 			if tool=="GodPower_RainOfPurity" and snapshot.has("opening"):
 				rain_held=true
 			if tool=="GodPower_FingerOfGod":
@@ -1170,6 +1213,7 @@ func _process(delta: float) -> void:
 	if leash_home!=-1 or leash_candidate!=-1 or leash_active:
 		if is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT): clear_lesson_leash()
 		else: advance_lesson_leash(delta)
+	if not pinned_leash_lines.is_empty(): update_pinned_leashes()
 	if belief_sweep and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT): end_belief_sweep()
 	if rain_held and (is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or not get_window().has_focus()): end_rain()
 	if finger_held and (is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or not get_window().has_focus()): release_finger()
@@ -1191,11 +1235,72 @@ func _input(event: InputEvent) -> void:
 		release_finger()
 
 
+func leash_context() -> Dictionary:
+	return snapshot.get("opening",snapshot.get("weyworld",snapshot))
+
+
+func leash_rules() -> Dictionary:
+	return snapshot.get("leash_lesson",{}).get("definition",leash_context().get("leash_controls",{}))
+
+
+func make_leash_line(rules: Dictionary,z_order: int) -> Line2D:
+	var line := Line2D.new()
+	var color: Array=rules["leash_color"]
+	line.default_color=Color(color[0],color[1],color[2],color[3])
+	line.z_index=z_order
+	add_child(line)
+	return line
+
+
+func leash_line_width(rules: Dictionary) -> float:
+	return float(rules["leash_size"])*get_viewport_rect().size.y/world_view.zoom
+
+
+func update_pinned_leashes() -> void:
+	var targets: Dictionary=snapshot.get("leash_pins",{})
+	if not pending_leash_pins.is_empty():
+		targets=targets.duplicate()
+		for pending: Dictionary in pending_leash_pins.values():
+			for id: int in pending["followers"]: targets[id]=pending["point"]
+			if pending["home"]!=-1: targets[pending["home"]]=pending["point"]
+	var rules:=leash_rules()
+	for id: int in pinned_leash_lines.keys():
+		if targets.has(id) and not rules.is_empty(): continue
+		var line: Line2D=pinned_leash_lines[id]
+		line.hide()
+		line.queue_free()
+		pinned_leash_lines.erase(id)
+	if targets.is_empty() or rules.is_empty(): return
+	var width:=leash_line_width(rules)
+	for id: int in targets:
+		var source: Node3D=world_view.actor_nodes.get(id)
+		var lift := 0.35
+		if not is_instance_valid(source):
+			source=world_view.home_nodes.get(id)
+			lift=0.5
+		var line: Line2D=pinned_leash_lines.get(id)
+		if not is_instance_valid(source) or not source.visible:
+			if is_instance_valid(line): line.hide()
+			continue
+		if not is_instance_valid(line):
+			line=make_leash_line(rules,-1)
+			line.end_cap_mode=Line2D.LINE_CAP_ROUND
+			pinned_leash_lines[id]=line
+		var point: Vector2=targets[id]
+		line.width=width
+		line.points=PackedVector2Array([
+			world_view.camera.unproject_position(source.position+Vector3.UP*lift),
+			world_view.camera.unproject_position(world_view.world_position(point.x,point.y))])
+		line.show()
+
+
 func lesson_follower_at(pointer: Vector2) -> int:
 	var result := -1
 	var distance := 18.0
+	var eligible: Variant=leash_context().get("leash_followers")
 	for follower: Dictionary in snapshot.get("followers",[]):
 		var id: int=follower["id"]
+		if eligible is Dictionary and not eligible.has(id): continue
 		var actor: Node3D=world_view.actor_nodes.get(id)
 		if not is_instance_valid(actor) or not actor.visible or id in leash_followers: continue
 		var projected: Vector2=world_view.camera.unproject_position(actor.position+Vector3.UP*0.35)
@@ -1216,15 +1321,15 @@ func begin_lesson_leash(point: Vector2) -> void:
 
 
 func begin_campaign_leash(cell: Vector2i,point: Vector2,cover: Dictionary) -> bool:
-	var opening: Dictionary=snapshot.get("opening",snapshot.get("weyworld",{}))
-	if not opening.has("leash_controls") or building_panel.popup.visible: return false
+	var context := leash_context()
+	if not context.has("leash_controls") or building_panel.popup.visible: return false
 	clear_lesson_leash()
 	var pointer: Vector2=world_view.pointer_screen
 	leash_candidate=lesson_follower_at(pointer)
 	if leash_candidate==-1:
 		var home_id: int=cover.get("home_id",world_view.home_at(point.x,point.y))
 		if home_id==-1: home_id=lesson_home_at(pointer,point)
-		if not home_id in opening["leash_homes"]: return false
+		if not home_id in context.get("leash_homes",[]): return false
 		leash_home=home_id
 	leash_click={"cell":cell,"point":point,"cover":cover}
 	return true
@@ -1240,23 +1345,28 @@ func lesson_home_at(pointer: Vector2,ground: Vector2) -> int:
 
 func advance_lesson_leash(delta: float) -> void:
 	var lesson: Dictionary=snapshot.get("leash_lesson",{})
-	var opening: Dictionary=snapshot.get("opening",snapshot.get("weyworld",{}))
-	var rules: Dictionary=lesson.get("definition",opening.get("leash_controls",{}))
+	var context := leash_context()
+	var rules:=leash_rules()
 	if rules.is_empty(): clear_lesson_leash(); return
 	var pointer: Vector2=world_view.pointer_screen
-	var candidate:=lesson_follower_at(pointer)
 	if not leash_active:
-		if leash_candidate!=-1 and leash_candidate!=candidate:
-			clear_lesson_leash()
-			return
+		# Keep the pressed follower while it walks during the hold.
+		if leash_candidate!=-1:
+			var actor: Node3D=world_view.actor_nodes.get(leash_candidate)
+			var eligible: Variant=context.get("leash_followers")
+			if not is_instance_valid(actor) or not actor.visible or eligible is Dictionary and not eligible.has(leash_candidate):
+				clear_lesson_leash()
+				return
 		if leash_home!=-1:
 			var point: Vector2=world_view.pick(pointer)
 			if lesson_home_at(pointer,point)!=leash_home:
 				clear_lesson_leash()
 				return
-	if lesson.get("selection","group")=="group" and leash_active and leash_candidate!=candidate:
-		leash_candidate=candidate
-		leash_hold=0.0
+	elif lesson.get("selection","group")=="group":
+		var candidate:=lesson_follower_at(pointer)
+		if leash_candidate!=candidate:
+			leash_candidate=candidate
+			leash_hold=0.0
 	if leash_home!=-1 or leash_candidate!=-1:
 		leash_hold+=delta
 		if leash_hold>=float(rules["hold_seconds"]):
@@ -1264,13 +1374,8 @@ func advance_lesson_leash(delta: float) -> void:
 			if leash_candidate!=-1 and leash_candidate not in leash_followers: leash_followers.append(leash_candidate)
 			leash_candidate=-1
 	if not leash_active: return
-	if not is_instance_valid(leash_line):
-		leash_line=Line2D.new()
-		leash_line.z_index=20
-		var color: Array=rules["leash_color"]
-		leash_line.default_color=Color(color[0],color[1],color[2],color[3])
-		add_child(leash_line)
-	leash_line.width=float(rules["leash_size"])*get_viewport_rect().size.y/world_view.zoom
+	if not is_instance_valid(leash_line): leash_line=make_leash_line(rules,20)
+	leash_line.width=leash_line_width(rules)
 	var points:=PackedVector2Array()
 	for id: int in leash_followers:
 		var actor: Node3D=world_view.actor_nodes.get(id)
@@ -1299,8 +1404,12 @@ func update_lesson_prompt(force: bool=false) -> void:
 
 func release_lesson_leash() -> void:
 	if leash_active and not is_paused:
-		var point: Vector2=world_view.pick(world_view.pointer_screen)
-		intent.emit({"type":"leash","followers":leash_followers.duplicate(),"home_id":leash_home,"x":point.x,"z":point.y})
+		var point: Vector2=world_view.pick(world_view.pointer_screen,null,true)
+		leash_request_id+=1
+		if point.x>=0:
+			pending_leash_pins[leash_request_id]={"point":point,"followers":leash_followers.duplicate(),"home":leash_home}
+			update_pinned_leashes()
+		intent.emit({"type":"leash","followers":leash_followers.duplicate(),"home_id":leash_home,"x":point.x,"z":point.y,"request_id":leash_request_id})
 	elif not leash_click.is_empty() and not is_paused:
 		act_on_world(leash_click["cell"],leash_click["point"],leash_click["cover"])
 	clear_lesson_leash()

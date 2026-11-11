@@ -1648,6 +1648,7 @@ static func valid(data: Variant) -> bool:
 	if not data.get("definition") is Dictionary or not data.get("globals") is Dictionary or not data.get("persistent") is Dictionary: return false
 	if not data.get("protected") is Array or not data.get("messages") is Array or not data.get("scheduled") is Array: return false
 	var definition: Dictionary = data["definition"]
+	if definition.has("construction_gems") and not preload("res://simulation/source_gem_cost.gd").valid(definition["construction_gems"]): return false
 	var rain:=preload("res://simulation/campaign_rain.gd")
 	if definition.has("rain") and not rain.valid_rules(definition["rain"]): return false
 	if data.has("rain_cast") and (not definition.has("rain") or not rain.valid_point(data["rain_cast"],1024)): return false

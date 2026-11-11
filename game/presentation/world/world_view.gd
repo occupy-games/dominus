@@ -669,9 +669,17 @@ func home_at(x: float, z: float) -> int:
 	return temple
 
 
-func pick(screen: Vector2, plane_height: Variant = null) -> Vector2:
+func pick(screen: Vector2, plane_height: Variant = null, align_to_screen: bool = false) -> Vector2:
 	var origin := camera.project_ray_origin(screen)
 	var ray := camera.project_ray_normal(screen)
+	if align_to_screen:
+		# The leash stays at this point after release. Use the rendered projection
+		# to account for viewport stretch when converting the pointer to a ray.
+		var projected := camera.unproject_position(origin)
+		var basis := camera.global_transform.basis
+		var horizontal := camera.unproject_position(origin+basis.x).x-projected.x
+		var vertical := camera.unproject_position(origin+basis.y).y-projected.y
+		origin+=basis.x*((screen.x-projected.x)/horizontal)+basis.y*((screen.y-projected.y)/vertical)
 	var center := (int(state["width"]) - 1) * 0.5
 	if plane_height != null:
 		var hit := origin + ray * ((float(plane_height) - origin.y) / ray.y)

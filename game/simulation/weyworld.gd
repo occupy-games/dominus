@@ -2,6 +2,7 @@ extends RefCounted
 ## Authored arrival tutorial and Weyworld's special construction biomes.
 
 const Biomes = preload("res://simulation/source_biomes.gd")
+const Leash = preload("res://simulation/campaign_leash.gd")
 const Numbers = preload("res://simulation/source_plot_schedule.gd")
 const Unlocks = preload("res://simulation/source_unlocks.gd")
 
@@ -109,8 +110,11 @@ static func presentation(state: Dictionary) -> Dictionary:
 	if Unlocks.enabled(state["progression"],"Leash") or progress["phase"]==0:
 		result["leash_controls"]=source["leash"]
 		result["leash_homes"]=[]
+		result["leash_followers"]={}
 		for home: Dictionary in state["homes"]:
 			if home.get("kind")=="ark" and home["residents"]>0: result["leash_homes"].append(home["id"])
+		for follower: Dictionary in state["followers"]:
+			if Leash.selectable(follower): result["leash_followers"][follower["id"]]=true
 	for id: int in progress["hints"]:
 		var point: Array=[]
 		match id:

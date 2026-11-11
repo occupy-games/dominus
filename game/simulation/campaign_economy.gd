@@ -111,7 +111,9 @@ static func plot_spec(state: Dictionary,command: Dictionary) -> Dictionary:
 
 
 static func worker_available(state: Dictionary,agent: Dictionary,item: Dictionary) -> bool:
-	return agent["job"]==-1 and not agent.has("workplace") and agent["state"]!="worshipping" and Vector2(agent["x"],agent["z"]).distance_to(Vector2(item["x"],item["z"]))<=float(item["radius"])
+	if agent["job"]!=-1 or agent.has("workplace") or agent["state"]=="worshipping": return false
+	if agent.has("ark_passenger") or agent.has("leash_goal") or agent.has("weyworld_destination"): return false
+	return Vector2(agent["x"],agent["z"]).distance_to(Vector2(item["x"],item["z"]))<=float(item["radius"])
 
 
 static func plan_existing_plot(world: RefCounted,state: Dictionary,item: Dictionary,workers: Array) -> Dictionary:

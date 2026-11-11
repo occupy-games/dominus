@@ -61,6 +61,17 @@ the selection dock remains available for inspection. A held collection gesture
 uses the source BeliefLeashing unlock and submits per-building commands, with
 simulation rechecking that gate. Presentation tracks visited IDs until release
 and intersects the full pointer segment so fast drags do not skip houses.
+Homeworld6's Finish Now action uses the original build-time and Ark columns of
+`balance/gemcost.csv`. Simulation quotes the current price and rechecks it
+against the confirmed amount before spending gems. Purchased work completes
+through the same construction tick and campaign hooks as follower work.
+Follower leashing uses the source advance, hold time and belief costs. Presentation
+keeps the identity picked on press as the follower walks during the hold. A ground
+order can reach any walkable terrace in the actionable area. Simulation keeps its
+destination through arrival and save continuation, and replans when the terrain
+or a building interrupts the route. The snapshot includes active drop points so
+presentation can keep each tether pinned to the terrain while its follower travels
+or waits for a route.
 Card research in either gallery sends the same validated simulation commands;
 recovered discovery and completion conditions remain distinct power gates.
 Resource drag previews never debit inventory. Dropping onto a portrait submits
@@ -155,8 +166,9 @@ Presentation handles the source hold duration and draws the leash. Returning
 to Homeworld runs the source post-load callback. A save during the lesson keeps
 the suspended Homeworld and restarts the lesson when loaded.
 
-Homeworld's unlocked leash resolves selected actors and reachable land or Dock
-approaches before charging belief. The Dock's source row supplies its berth,
+Homeworld's unlocked leash resolves selected actors, land targets and Dock
+approaches before charging belief. A ground order waits for a route if the terrain
+is disconnected. The Dock's source row supplies its berth,
 repair duration and Builder capacity. Its blank height field uses the original
 map layer at the berth. The original tutorial callbacks advance on a valid
 leash, completed work, and dismissal of the Voyages card. The Dock's GO command
@@ -201,10 +213,11 @@ playthrough. Promised Land's supported arrival/first-rock steps use original
 callbacks, namespaced UI acknowledgements and an explicit object exception.
 Authored CSV rocks have a source-derived center, footprint and native model
 dispatch. Simulation owns their clearing and publishes detached visibility and
-placement descriptors; rendering and picking consume those descriptors. Homeworld6's
-initial placements are recovered offline by its original bounded x86 kernel,
-including coordinate hashing, terrain sampling and authored-before-generated
-loading. Infrastructure validates compact records and injects initial plain state.
+placement descriptors; rendering and picking consume those descriptors. Content
+setup translates Homeworld6's original coordinate hashing, terrain sampling and
+authored-before-generated placement order. An independent bounded x86 capture
+verifies the entire placement stream. Infrastructure validates compact records
+and injects initial plain state.
 Simulation owns footprint indices, clearing and cached visibility; presentation
 receives shared immutable descriptors and detached byte masks. The optional CPU
 emulator is never a game dependency. Runtime regeneration/resampling and the

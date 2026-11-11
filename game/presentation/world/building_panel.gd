@@ -22,6 +22,9 @@ var repair_button: TextureButton
 var voyage_button: TextureButton
 var ark_button: TextureButton
 var ark_caption: Label
+var finish_button: TextureButton
+var finish_price := Label.new()
+var finish_caption: Label
 var row_values: Dictionary = {}
 var current_art := ""
 var row_layout := ""
@@ -47,6 +50,8 @@ func _ready() -> void:
 	ark_caption=label_at(ark_button,"",Vector2.ZERO,Vector2(64,60),16)
 	ark_caption.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
 	ark_caption.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+	finish_button=action_button("GFX_IconGemsSmall.png","",finish_price,func() -> void: action_requested.emit("finish"))
+	finish_caption=finish_button.get_parent().get_child(2)
 	add_child(canvas)
 	canvas.mouse_filter=Control.MOUSE_FILTER_IGNORE
 	canvas.size=Vector2(760,500)
@@ -187,7 +192,7 @@ func stat(key: String,value: String,icon: String="") -> void:
 	row_values[key]=value_
 
 
-func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: bool,can_repair: bool=false,can_voyage: bool=false,ark_action: String="") -> void:
+func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: bool,can_repair: bool=false,can_voyage: bool=false,ark_action: String="",finish: Dictionary={}) -> void:
 	if data.is_empty(): hide_selection(); return
 	stats=data.duplicate(true)
 	dock.show()
@@ -200,6 +205,11 @@ func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: boo
 	ark_button.get_parent().visible=not ark_action.is_empty()
 	ark_button.tooltip_text=ark_action
 	ark_caption.text=ark_action
+	finish_button.get_parent().visible=finish.has("gems")
+	finish_button.disabled=not finish.get("ok",false)
+	finish_button.tooltip_text=finish.get("label","")
+	finish_caption.text=finish_button.tooltip_text
+	finish_price.text=str(finish.get("gems",""))
 	collect_button.disabled=not can_collect
 	occupancy.text="%d / %d"%[data["occupants"],data["capacity"]]
 	var collect_sprite := "GFX_IWIcon_Belief.png"

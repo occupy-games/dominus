@@ -16,6 +16,7 @@ import struct
 from tools.current_cards import decode_archive, rows
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_EXECUTABLE_SHA256 = 'e9eef972a25fcf513a3b659db7b0d6c9eb1617813c10098ef544a05f430445ef'
 
 
 class NativeImage:

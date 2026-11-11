@@ -114,13 +114,29 @@ def prepare(root,bundle,report,archive=None,source=None,engine=None):
            ('original_assets.py',['--ww2ogg',str(ww2ogg),'--revorb',str(revorb),'--codebooks',str(codebooks)]),
            ('models.py',[]),('campaign.py',[]),('current_cards.py',[]),('campaign_rules.py',[]),
            ('building_info.py',[]),('tree_imposters.py',[]),('adventures.py',[])]
-    for index,(script,args) in enumerate(steps):
-        report('convert',.4+.48*index/len(steps),f'Preparing content ({index+1}/{len(steps)})')
-        run([sys.executable,root/'tools'/script,*args],root,environment,log)
     # Pure metadata recoveries read source tables/instructions; no original
     # executable is ever launched by content setup.
-    for module in ['temple_repair','temple_sites','temple_terrain','temple_membership','temple_modifiers','temple_effects','building_foundation','house_base_stats','house_environment','house_terrain_frame','storm_chests','chest_glint','beautify','beautify_particles','god_seed','finger_of_god','astari_raids','astari_village']:
-        run([sys.executable,'-m','tools.'+module],root,environment,log)
+    recovery_modules = [
+        'campaign_scenarios', 'scenery_layout', 'house_values', 'house_selection',
+        'build_candidates', 'plot_conversion', 'build_start', 'plot_cost',
+        'house_constructor', 'house_pool', 'target_references',
+        'action_sequences', 'action_entry', 'action_controller',
+        'plot_field', 'plot_resize', 'influence_rules',
+        'temple_repair', 'temple_sites', 'temple_terrain', 'temple_membership',
+        'temple_modifiers', 'temple_effects', 'building_foundation',
+        'house_base_stats', 'house_environment', 'house_terrain_frame',
+        'storm_chests', 'chest_glint', 'sticker_selection', 'card_research',
+        'reward_dispatch', 'unlock_dispatch', 'reward_queue', 'reward_catalog',
+        'era_progression', 'rock_motion', 'tree_response',
+        'beautify', 'beautify_particles', 'god_seed', 'finger_of_god',
+        'astari_raids', 'astari_village',
+    ]
+    commands = [[sys.executable, root / 'tools' / script, *args] for script, args in steps]
+    commands.extend([sys.executable, '-m', 'tools.' + module] for module in recovery_modules)
+    for index, command in enumerate(commands):
+        report('convert', .4 + .48 * index / len(commands),
+               f'Preparing content ({index + 1}/{len(commands)})')
+        run(command, root, environment, log)
     report('import',.9,'Preparing graphics and audio for first launch')
     engine=Path(engine) if engine else (bundle/'engine' if (bundle/'engine').is_file() else Path(shutil.which('godot') or '/Applications/Godot.app/Contents/MacOS/Godot'))
     run([engine,'--headless','--path',root/'game','--editor','--import','--log-file',root/'import.log'],root,environment,log)

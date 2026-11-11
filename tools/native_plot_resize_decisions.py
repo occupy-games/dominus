@@ -5,17 +5,10 @@ repair choices execute every Boolean combination in the supplied executable.
 Runtime needs these small source-derived tables, never a CPU emulator.
 """
 import argparse
-import hashlib
-import json
-import struct
+from pathlib import Path
 
 from tools.native_scenery_oracle import Oracle, ROOT
-
-GROW=['left','right','bottom','top','bottom_left','bottom_right','top_left','top_right']
-GROW_SLOTS=[-0x80,-0x7c,-0x78,-0x74,-0x70,-0x6c,-0x68,-0x64]
-REPAIR=['inner_bottom','inner_top','inner_left','inner_right','bottom_left','bottom_right','top_left','top_right',
-        'outer_left','outer_right','outer_bottom','outer_top']
-REPAIR_SLOTS=[-0x60,-0x40,-0x4c,-0x38,-0x58,-0x50,-0x24,-0x54,-0xc4,-0xc0,-0xbc,-0xb8]
+from tools.plot_resize import GROW_SLOTS, REPAIR_SLOTS, write_tables
 
 
 class DecisionOracle(Oracle):
@@ -66,21 +59,7 @@ def main():
     oracle.configure_decisions()
     growth=bytes(oracle.evaluate('grow',mask,maximum) for maximum in [4,5,6] for mask in range(256))
     repair=bytes(oracle.evaluate('repair',mask) for mask in range(4096))
-    result={'version':1,'executable_sha256':hashlib.sha256(raw).hexdigest(),
-            'progress_rate':struct.unpack('<d',oracle.image.read(0x104ec570,8))[0],
-            'progress_rate_native':{'address':'0x104ec570','bytes':oracle.image.read(0x104ec570,8).hex()},
-            'growth':{'path':'campaign/plot-growth-decisions.bin','sha256':hashlib.sha256(growth).hexdigest(),
-                      'inputs':GROW,'slots':GROW_SLOTS,'maximum_regimes':['at_or_below_size','size_plus_one','size_plus_two_or_more'],'count':len(growth)},
-            'repair':{'path':'campaign/plot-repair-decisions.bin','sha256':hashlib.sha256(repair).hexdigest(),
-                      'inputs':REPAIR,'slots':REPAIR_SLOTS,'count':len(repair)},
-            'native_routines':{hex(a):oracle.image.read(a,b-a).hex() for a,b in [(0x102383b4,0x10238b0d),(0x10239302,0x1023971b)]},
-            'adapters':[hex(a) for a in sorted(oracle.touched)],
-            'scope':'Complete Boolean branch kernels for original plot growth and repair movement/size choices. Predicates, neighbor-list collection, claims, dirty ordering, footprint registration and min-size finalization are separate.'}
-    from pathlib import Path
-    directory=Path(args.output)
-    (directory/'plot-growth-decisions.bin').write_bytes(growth)
-    (directory/'plot-repair-decisions.bin').write_bytes(repair)
-    (directory/'plot-resize-rules.json').write_text(json.dumps(result,indent=2)+'\n')
+    write_tables(oracle.image,Path(args.output),growth,repair,oracle.touched)
     print('Original plot resize decisions:',len(growth),'growth,',len(repair),'repair; actions',sorted(set(growth)),sorted(set(repair)))
 
 

@@ -105,6 +105,8 @@ func run() -> void:
 	world.step([{"type":"repair_shrine","id":shrine["id"]}])
 	for tick in range(250): world.step()
 	check("GodPower_Totem" in state_of(world)["progression"]["powers"],"Completing shrine repair must unlock the original power")
+	var blocked_power := power.merged({"x":dwelling["x"],"z":dwelling["z"]},true)
+	check(not world.inspect(blocked_power)["ok"],"An abode must block totem placement on its footprint")
 	world.step([{"type":"open_chest","id":"fixture:7"},power])
 	state=state_of(world)
 	check(state["progression"]["totem"].get("active",false),"A validated cast must place and activate the totem")

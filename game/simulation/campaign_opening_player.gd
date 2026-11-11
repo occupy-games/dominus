@@ -5,6 +5,7 @@ extends RefCounted
 const DIRECTIONS := [Vector2i.LEFT,Vector2i.UP,Vector2i.RIGHT,Vector2i.DOWN]
 const Farming = preload("res://simulation/campaign_farming.gd")
 const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
+const TempleFootprint = preload("res://simulation/source_temple_footprint.gd")
 var last_sculpt_tick := -100
 var camera_center := Vector2.INF
 var planned_edits := 0
@@ -479,6 +480,7 @@ func excavate_chest(world: RefCounted,chest: Dictionary) -> Dictionary:
 func connect_shrine(world: RefCounted,state: Dictionary) -> Dictionary:
 	var location: Dictionary=state["opening"]["definition"]["constants"]["FIRST_SHRINE"]
 	var anchor := Vector2i(location["x"],location["y"])
+	var site: Dictionary=world.source_shrine_site()
 	var homes: Array=state["homes"].duplicate()
 	homes.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
 		return Vector2i(a["work_x"],a["work_z"]).distance_squared_to(anchor)<Vector2i(b["work_x"],b["work_z"]).distance_squared_to(anchor))
@@ -486,7 +488,7 @@ func connect_shrine(world: RefCounted,state: Dictionary) -> Dictionary:
 		var origin := Vector2i(home["work_x"],home["work_z"])
 		if home["residents"]<=home.get("breeder_count",1): continue
 		for direction: Vector2i in DIRECTIONS:
-			var gesture := route_gesture(world,sculpt_route(world,state,origin,anchor+direction,5))
+			var gesture := route_gesture(world,sculpt_route(world,state,origin,anchor+direction,5,-1,site))
 			if not gesture.is_empty(): return gesture
 	diagnostic="No legal sculpt gesture connects a Builder to the Shrine of Expansion."
 	return {}
@@ -611,8 +613,16 @@ func choose_growth_site(world: RefCounted,state: Dictionary) -> Vector3i:
 	return best
 
 
-func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Vector2i,margin: int,target_height: int=-1) -> Array:
+func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Vector2i,margin: int,target_height: int=-1,site: Dictionary={}) -> Array:
 	var bounds := Rect2i(start.min(target)-Vector2i.ONE*margin,(start-target).abs()+Vector2i.ONE*(margin*2+1))
+	var shrine_area := Rect2i()
+	var shrine_ceiling := 63
+	if not site.is_empty():
+		var footprint: Dictionary=world.source_shrine_terrain_footprint(site)
+		var rules: Dictionary=state["opening"]["definition"]["temple_footprint_rules"]
+		shrine_area=TempleFootprint.bounds(footprint,rules)
+		shrine_ceiling=floori(TempleFootprint.clearance_threshold(footprint,rules))-19
+		if shrine_area.has_point(target): target_height=mini(target_height,shrine_ceiling)
 	var first := Vector3i(start.x,start.y,world.height_at(start.x,start.y))
 	if first.z<=0: return []
 	var heap: Array = []
@@ -639,6 +649,7 @@ func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Ve
 			var actual: int = world.height_at(cell.x,cell.y)
 			var minimum := maxi(1,current.z-1)
 			var maximum := mini(63,current.z+1)
+			if shrine_area.has_point(cell): maximum=mini(maximum,shrine_ceiling)
 			if cell==target and target_height>0:
 				minimum=maxi(minimum,target_height)
 				maximum=mini(maximum,target_height)
@@ -646,13 +657,15 @@ func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Ve
 				if actual!=height and not editable(world,state,cell,actual,height): continue
 				var next := Vector3i(cell.x,cell.y,height)
 				var cost: float = costs[current]+1+absi(actual-height)*6
-				if cost>=float(costs.get(next,INF)): continue
+				if closed.has(next) or cost>=float(costs.get(next,INF)): continue
 				costs[next]=cost
 				previous[next]=current
 				serial+=1
 				var remaining:=absi(cell.x-target.x)+absi(cell.y-target.y)
 				if target_height>0: remaining=maxi(remaining,absi(height-target_height))
-				push(heap,[cost+remaining,serial,next])
+				# Favor progress toward the goal before the bounded search
+				# spends its budget exploring nearby terraces at other heights.
+				push(heap,[cost+2.0*remaining,serial,next])
 	return []
 
 
@@ -668,6 +681,8 @@ func route_contains_cell(previous: Dictionary,step: Vector3i,cell: Vector2i) -> 
 
 func editable(world: RefCounted,state: Dictionary,cell: Vector2i,actual: int,height: int) -> bool:
 	if not world.can_act_at(cell.x,cell.y): return false
+	if height<actual and world._supported_retraction(cell.x,cell.y,actual,height)>height: return false
+	if not state.has("opening"): return true
 	var opening: Dictionary = state["opening"]
 	var band: Dictionary = opening["definition"]["coastal_free_band"]
 	var index := cell.y*int(state["width"])+cell.x

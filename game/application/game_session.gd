@@ -200,6 +200,7 @@ func load_game(path: String = "") -> Dictionary:
 	var needs_environment: bool=not opening.is_empty() and not opening["definition"].has("environment_advances")
 	var needs_grain: bool=not opening.is_empty() and (not opening["definition"].has("grain_building_card") or not opening["definition"].has("grain_advances") or not opening["definition"].has("mining_core") or not opening["definition"].has("stone_abodes"))
 	var needs_ark: bool=not opening.is_empty() and not opening["definition"].get("ark",{}).has("sail_labels")
+	var needs_gem_prices: bool=not opening.is_empty() and not opening["definition"].has("construction_gems")
 	var needs_pit: bool=not opening.is_empty() and not opening["definition"].has("pit_sacrifice")
 	var needs_rain: bool=not opening.is_empty() and not opening["definition"].has("rain")
 	var needs_fountain: bool=not opening.is_empty() and not opening["definition"].has("fountain")
@@ -214,7 +215,7 @@ func load_game(path: String = "") -> Dictionary:
 	var needs_raids: bool=not opening.is_empty() and not opening["definition"].has("astari_raids")
 	var needs_village: bool=not opening.is_empty() and not opening["definition"].has("astari_village")
 	var needs_core_stats: bool=not opening.is_empty() and not opening["definition"].get("farming_core",{}).has("belief_modifier")
-	if needs_ark or needs_belief_advances or needs_god_seed or needs_finger or needs_raids or needs_village or needs_core_stats or needs_cliff or needs_later_powers or needs_mud_lodge or needs_later_housing or needs_fountain or needs_rain or needs_pit or needs_grain or needs_farming or needs_storms or needs_pack_chests or needs_environment or needs_dock or needs_leash or needs_discovery or needs_belief or needs_shrine or needs_housing or needs_timeline or opening.get("phase")=="promised_land" and (opening.get("promised_step") in [3,6,9,10] and not opening.get("handoff",{}).get("available",true) or needs_chest):
+	if needs_ark or needs_gem_prices or needs_belief_advances or needs_god_seed or needs_finger or needs_raids or needs_village or needs_core_stats or needs_cliff or needs_later_powers or needs_mud_lodge or needs_later_housing or needs_fountain or needs_rain or needs_pit or needs_grain or needs_farming or needs_storms or needs_pack_chests or needs_environment or needs_dock or needs_leash or needs_discovery or needs_belief or needs_shrine or needs_housing or needs_timeline or opening.get("phase")=="promised_land" and (opening.get("promised_step") in [3,6,9,10] and not opening.get("handoff",{}).get("available",true) or needs_chest):
 		var content := preload("res://infrastructure/campaign_content.gd").for_state(saved)
 		if content.has("story"): candidate.resume_opening_handoff(content["story"])
 	candidate.prepare_loaded_opening()

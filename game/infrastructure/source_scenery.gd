@@ -1,5 +1,5 @@
 extends RefCounted
-## Initial placements recovered by the original bounded CPU kernel, not density cells.
+## Validates the source placement stream and loads the initial scenery.
 
 
 static func load_layout(story: Dictionary,terrain: PackedByteArray,fingerprints: Dictionary) -> Dictionary:

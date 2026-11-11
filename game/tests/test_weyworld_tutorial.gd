@@ -3,6 +3,7 @@ extends SceneTree
 const World = preload("res://simulation/world.gd")
 const Weyworld = preload("res://simulation/weyworld.gd")
 const Content = preload("res://infrastructure/campaign_content.gd")
+const Economy = preload("res://simulation/campaign_economy.gd")
 var failures := 0
 
 
@@ -37,6 +38,8 @@ func run() -> void:
 	var passenger: Dictionary=state["followers"][0]
 	var direct: Dictionary=world.inspect({"type":"weyworld_release_ark","id":ark["id"]})
 	var shore: Vector2i=direct["target"]
+	var nearby_settlement := {"x":ark["x"],"z":ark["z"],"radius":20}
+	check(not Economy.worker_available(state,passenger,nearby_settlement),"Worker dispatch must leave passengers aboard the Ark")
 	var leash: Dictionary={}
 	for offset: Vector2i in [Vector2i.LEFT,Vector2i.RIGHT,Vector2i.UP,Vector2i.DOWN]:
 		var point:=shore+offset
@@ -48,11 +51,13 @@ func run() -> void:
 	world.step([leash,leash])
 	check(ark["residents"]==0 and state["belief"]==old_belief-int(Weyworld.rules(state)["leash"]["home_cost"]),"One valid hold gesture must debit once and release one passenger")
 	check(not passenger.has("ark_passenger") and tutorial["phase"]==1 and not 5801 in tutorial["hints"],"The leash must advance the original opening step")
+	check(passenger.has("weyworld_destination") and not Economy.worker_available(state,passenger,nearby_settlement),"Worker dispatch must respect the follower's active leash order")
 	var goal:=Vector2(leash["x"],leash["z"])
 	for tick in range(120):
 		if not passenger.has("weyworld_destination"): break
 		world.step()
 	check(not passenger.has("weyworld_destination") and Vector2(passenger["x"],passenger["z"]).distance_to(goal)<0.01,"The released passenger must walk to the dropped destination")
+	check(Economy.worker_available(state,passenger,nearby_settlement),"The follower must become eligible for work on arrival")
 	var house: Dictionary={}
 	var origin:=Vector2i(goal)
 	for radius in range(1,12):
@@ -86,8 +91,37 @@ func run() -> void:
 	restored.step([{"type":"campaign_ack","id":5806}])
 	check(5805 in restored._state["weyworld"]["hints"],"Acknowledging Granite must reveal the queued Hallowed Ground explanation")
 	check_biomes(state,p)
+	check_disconnected_passenger(world,content)
 	print("Weyworld authored tutorial, leash and biomes: ",failures," failures")
 	quit(1 if failures else 0)
+
+
+func check_disconnected_passenger(world: RefCounted,content: Dictionary) -> void:
+	world.initialize({"campaign_data":content},RandomNumberGenerator.new())
+	var ark: Dictionary=world._state["homes"][0]
+	var destination := Vector2i(116,247)
+	var leash := {"type":"leash","home_id":ark["id"],"followers":[],"x":destination.x,"z":destination.y}
+	var quote: Dictionary=world.inspect(leash)
+	check(quote["ok"] and quote.get("orders",[{}])[0].get("path",[-1]).is_empty(),"The Ark must accept a leash to the disconnected Weyworld terrace")
+	if failures: return
+	var old_belief: int=world._state["belief"]
+	world.step([leash])
+	var passenger: Dictionary=world._state["followers"][0]
+	check(ark["residents"]==0 and world._state["belief"]==old_belief-int(quote["cost"]),"The passenger must disembark and pay once")
+	check(passenger["state"]=="waiting" and passenger.get("weyworld_destination")==[destination.x,destination.y],"The passenger must retain its destination while the terraces are disconnected")
+	check(world.restore(world.export_state(),RandomNumberGenerator.new()),"A waiting passenger's order must survive restoring")
+	if failures: return
+	for drag: Dictionary in [
+		{"type":"sculpt_drag","x":115,"z":247,"nx":-1,"nz":0,"layer":5,"distance":1,"radius":0},
+		{"type":"sculpt_drag","x":115,"z":247,"nx":-1,"nz":0,"layer":7,"distance":-1,"radius":0}]:
+		check(world.inspect(drag)["ok"],"The original shore route must be sculptable")
+		world.step([drag])
+	passenger=world._state["followers"][0]
+	for tick in range(800):
+		if not passenger.has("weyworld_destination"): break
+		world.step()
+	check(not passenger.has("weyworld_destination") and Vector2(passenger["x"],passenger["z"]).distance_to(Vector2(destination))<0.01,
+		"Connecting the Weyworld terraces must resume the saved Ark leash")
 
 
 func check_biomes(state: Dictionary,p: Dictionary) -> void:

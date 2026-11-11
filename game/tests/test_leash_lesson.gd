@@ -56,10 +56,14 @@ func run() -> void:
 	check(world.inspect(group)["ok"] and world.inspect(group)["cost"]==400,"The group must find four approaches to the original shrine")
 	world.step([group])
 	check(lesson["stage"]==Lesson.REPAIR and state["belief"]==9400 and not state["progression"]["shrines"][0]["complete"],"Directing the group must start actual repair and charge all four followers once")
+	var pins: Dictionary=world.snapshot(false)["leash_pins"]
+	check(group["followers"].all(func(id: int) -> bool: return pins.get(id)==Vector2(temple[0],temple[1])),
+		"The tutorial group must share the dropped pin as it walks to the shrine")
 	for tick in range(1600):
 		if lesson["stage"]==Lesson.RETURN: break
 		world.step()
 	check(state["progression"]["shrines"][0]["complete"] and lesson["stage"]==Lesson.RETURN,"Only completing the work can expose the original return prompt")
+	check(world.snapshot(false)["leash_pins"].is_empty(),"The group pin must clear after the followers reach their work slots")
 	var events:=world.step([{"type":"campaign_ack","id":6013}])
 	check(state["won"] and events.has({"type":"campaign_leash_lesson_return"}),"Dismissing the final instruction must request the return to Homeworld")
 	print("Original Leashing tutorial: ",failures," failures")

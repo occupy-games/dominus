@@ -2,6 +2,7 @@ extends SceneTree
 
 const World = preload("res://simulation/world.gd")
 const Astari = preload("res://simulation/campaign_astari.gd")
+const GemCost = preload("res://simulation/source_gem_cost.gd")
 var failures := 0
 
 
@@ -107,6 +108,7 @@ func run() -> void:
 	var hull: Dictionary=state["homes"].back()
 	check(state["wheat"]==0 and state["ore"]==0 and hull["model_id"]=="ark.group.bin:dff1563f","Construction must charge once and use the original assembled hull")
 	check(hull["build_ticks"]==72000 and hull["build_capacity"]==300,"Construction must retain the source time and builder capacity")
+	check_gem_finish(world)
 	complete_current_build(world)
 	check(ark["complete"] and opening["ark_progress"]["complete"],"Finishing the hull must complete the Ark milestone")
 	check(hull["residents"]==1 and other.get("indoors_home")==hull["id"],"The builder who worked on the Ark must board on completion")
@@ -121,6 +123,32 @@ func run() -> void:
 	check_crossing(restored)
 	print("Homeworld6 Astari and Ark crossing: ",failures," failures")
 	quit(1 if failures else 0)
+
+
+func check_gem_finish(source: RefCounted) -> void:
+	var world := World.new()
+	check(world.restore(source.export_state(),RandomNumberGenerator.new()),"An unfinished Ark must retain its original gem quote data on load")
+	if failures: return
+	var state: Dictionary=world._state
+	var rules: Dictionary=state["opening"]["definition"]["construction_gems"]
+	# Observed from 0x10025860 and the native rounded quote wrapper.
+	for sample: Array in [[0.0,false,0],[0.1,false,1],[288.0,false,1],[289.0,false,2],
+			[3600.0,false,10],[3601.0,false,11],[150000.0,false,207],
+			[7200.0,true,8],[9240.0,true,10],[9241.0,true,11],[650000.0,true,209]]:
+		check(GemCost.price(rules,sample[0],sample[1])==sample[2],"Construction gem prices must match the original interpolation and rounding")
+	var command:={"type":"campaign_finish_building","entity":"temple","id":"1036"}
+	state["gems"]=7
+	var quote: Dictionary=world.inspect(command)
+	check(not quote["ok"] and quote.get("gems")==8,"Ark Finish Now must quote the dedicated Ark column and require the full price")
+	state["gems"]=16
+	check(not world.inspect(command.merged({"max_gems":7}))["ok"],"A price over the confirmed limit must reject")
+	command["max_gems"]=8
+	check(world.inspect(command)["ok"],"Eight gems must buy completion on the started Ark")
+	var events:=world.step([command,command])
+	check(state["gems"]==8 and state["ore"]==0 and state["wheat"]==0,"Finishing must spend gems once and preserve paid construction resources")
+	check(world.source_shrine_site("1036")["complete"] and events.any(func(event:Dictionary)->bool: return event["type"]=="campaign_ark_completed"),
+		"Purchasing completion must run the normal Ark completion and tutorial hooks")
+	check(not world.inspect(command)["ok"],"A completed Ark must have no Finish Now purchase")
 
 
 func complete_current_build(world: RefCounted) -> void:

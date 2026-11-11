@@ -374,6 +374,27 @@ def settlement_upgrades(files, unlocks, config, localization):
     return result, [upgrade_path, modifier_path]
 
 
+def construction_gems(files, image, localization):
+    table = 'balance/gemcost.csv'
+    header, *prices = rows(files, table)
+    if header != ['Gem Cost', 'BuildTime', 'SprogTime', 'Belief', 'Wheat', 'Ore', 'Ark']:
+        raise CompileError('Unexpected original gem price columns')
+    # The three native quote wrappers select BuildTime, BuildTime and Ark.
+    if (image.read(0x100baa14, 2), image.read(0x1013e1bc, 2), image.read(0x1013e1ec, 2)) != (b'\x6a\x00', b'\x6a\x00', b'\x6a\x05'):
+        raise CompileError('Missing original construction gem quote dispatch')
+    labels = {
+        'home': 'LOC_BUTTON_HOUSE_BUILDINGGEMS', 'farm': 'LOC_BUTTON_FARM_BUILDINGGEMS',
+        'mine': 'LOC_BUTTON_MINE_BUILDINGGEMS', 'temple': 'LOC_BUTTON_SHRINE_GEMS',
+        'title': 'LOC_POPUP_SPEND_GEMS_FINISHBUILDING_TITLE', 'currency': 'LOC_Card_ShDesc_Gems',
+    }
+    return {
+        'prices': [[float(row[index]) for index in (0, 1, 6)] for row in prices],
+        'completion_padding': struct.unpack('<d', image.read(0x104a0d10, 8))[0],
+        'labels': {kind: text(key, localization) for kind, key in labels.items()},
+        'native_quotes': {'curve': 0x10025860, 'home': 0x100ba9f0, 'temple': 0x1013e1b0, 'ark': 0x1013e1e0},
+    }
+
+
 def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campaign'):
     archive = source/'received/godussteamrel/balance.datz'
     files = decode_archive(archive.read_bytes())
@@ -882,6 +903,8 @@ def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campa
                    'leash_color':[config['LeashColour.'+axis] for axis in 'xyz']+[config['LeashOpacity']]}
     ark,ark_messages = ark_progression(files,local_parser,localization)
     messages.update(ark_messages)
+    gems = construction_gems(files, image, localization)
+    used.append('balance/gemcost.csv')
     capacity, capacity_messages, capacity_tables = capacity_shrine(files, local_parser, values, localization, source)
     messages.update(capacity_messages)
     used.extend(capacity_tables)
@@ -904,7 +927,7 @@ def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campa
               'swamp':swamp,'meteor':meteor,
               'rock_belief':rock_belief,'belief_collector':collector,'builder_settlement':builder_settlement,
               'mining_settlement':mining_settlement,'ark':ark,'capacity_shrine':capacity,'speed_shrine':speed,
-              'settlement_upgrades':settlements,
+              'settlement_upgrades':settlements,'construction_gems':gems,
               'route':[{'index':i,'entry':entry} for i,entry in sorted(route.items())],
               'program':{'body':[], 'functions':local_parser.functions,
                          'local_function_names':local_parser.local_function_names,

@@ -1,9 +1,11 @@
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 from tools.native_scenery_oracle import NativeImage
+from tools.plot_resize import extract
 
 ROOT=Path(__file__).resolve().parents[1]
 DIRECTORY=ROOT/'game/assets/original/campaign'
@@ -44,3 +46,17 @@ class PlotResizeTests(unittest.TestCase):
         self.assertEqual(cases['interior_lost']['owners'],{})
         self.assertEqual(cases['flat']['revisit'],[0])
         self.assertEqual(cases['at_maximum']['revisit'],[])
+
+    def test_setup_regenerates_every_native_branch_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            metadata = extract(output=output)
+            for kind, digest in [
+                ('growth', '2e929dbbd7351d512a5377ddaa9ee048019266679bdd5c8d251750349942d07c'),
+                ('repair', '5a3954dfac913d7e25cea52b45bf559c758bffd04044f20a84f1091e5c8868dd'),
+            ]:
+                filename = f'plot-{kind}-decisions.bin'
+                payload = (output / filename).read_bytes()
+                self.assertEqual(payload, (DIRECTORY / filename).read_bytes())
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
+                self.assertEqual(metadata[kind]['sha256'], digest)
