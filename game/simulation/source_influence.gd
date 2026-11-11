@@ -3,7 +3,7 @@ extends RefCounted
 ## Field tiles use plain row order; source Morton storage has identical values.
 
 const Terrain = preload("res://simulation/source_terrain.gd")
-const Schedule = preload("res://simulation/source_plot_schedule.gd")
+const MapFields = preload("res://simulation/source_map_fields.gd")
 
 
 static func initial() -> Dictionary:
@@ -23,22 +23,11 @@ static func valid_rules(rules: Variant) -> bool:
 
 static func byte_at(state: Dictionary,field: int,x: int,z: int) -> int:
 	if x<0 or z<0 or x>=1024 or z>=1024: return 0
-	var tiles: Dictionary=state["fields"][str(field)]
-	var key := str((z/32)*32+x/32)
-	return int(tiles[key][(z%32)*32+x%32]) if tiles.has(key) else 0
+	return MapFields.byte_at(state,field,x,z)
 
 
 static func write_byte(state: Dictionary,field: int,x: int,z: int,value: int) -> void:
-	var tiles: Dictionary=state["fields"][str(field)]
-	var key := str((z/32)*32+x/32)
-	if not tiles.has(key):
-		var bytes := PackedByteArray()
-		bytes.resize(1024)
-		tiles[key]=bytes
-	# Packed array dictionary lookups are values: assign the edited tile back.
-	var bytes: PackedByteArray=tiles[key]
-	bytes[(z%32)*32+x%32]=value
-	tiles[key]=bytes
+	MapFields.write_byte(state,field,x,z,value)
 
 
 static func circle_byte(x: float,z: float,radius: float,cell_x: int,cell_z: int,rules: Dictionary) -> int:
@@ -85,8 +74,12 @@ static func circle(state: Dictionary,command: Dictionary,rules: Dictionary) -> b
 
 
 static func allows(state: Dictionary,x: int,z: int,power: bool,rules: Dictionary) -> bool:
-	var own := Terrain.f32(float(byte_at(state,4,x,z))*float(rules["decode_scale"]))
-	var restricted := Terrain.f32(float(byte_at(state,6,x,z))*float(rules["decode_scale"]))
+	return allows_bytes(byte_at(state,4,x,z),byte_at(state,6,x,z),power,rules)
+
+
+static func allows_bytes(own_byte: int,restricted_byte: int,power: bool,rules: Dictionary) -> bool:
+	var own := Terrain.f32(float(own_byte)*float(rules["decode_scale"]))
+	var restricted := Terrain.f32(float(restricted_byte)*float(rules["decode_scale"]))
 	return maxf(own,restricted)>=float(rules["threshold"]) if power else own>=float(rules["threshold"]) and restricted<=float(rules["threshold"])
 
 
@@ -104,27 +97,19 @@ static func valid(state: Variant) -> bool:
 			var value: Variant=entry.get(field)
 			if not (value is int or value is float) or not is_finite(float(value)) or Terrain.f32(float(value))!=float(value): return false
 		if float(entry["x"])<-1024 or float(entry["x"])>2048 or float(entry["z"])<-1024 or float(entry["z"])>2048 or float(entry["radius"])<0 or float(entry["radius"])>2048: return false
-	for field: String in ["4","6"]:
-		if not state["fields"].get(field) is Dictionary: return false
-		for key: Variant in state["fields"][field]:
-			if not key is String or not key.is_valid_int() or str(int(key))!=key or not Schedule.integer_between(int(key),0,1023): return false
-			var bytes: Variant=state["fields"][field][key]
-			if not (bytes is Array or bytes is PackedByteArray) or bytes.size()!=1024: return false
-			for value: Variant in bytes:
-				if not Schedule.integer_between(value,0,255): return false
-	return true
+	return state["fields"].has("4") and state["fields"].has("6") and MapFields.valid(state)
 
 
 static func restore(saved: Variant) -> Dictionary:
 	if not valid(saved): return {}
 	var state: Dictionary=saved.duplicate(true)
-	for field: String in ["4","6"]:
+	for field: String in state["fields"]:
 		for key: String in state["fields"][field]: state["fields"][field][key]=PackedByteArray(state["fields"][field][key])
 	return state
 
 
 static func export_state(state: Dictionary) -> Dictionary:
 	var saved := state.duplicate(true)
-	for field: String in ["4","6"]:
+	for field: String in saved["fields"]:
 		for key: String in saved["fields"][field]: saved["fields"][field][key]=Array(saved["fields"][field][key])
 	return saved

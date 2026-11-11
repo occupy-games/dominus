@@ -19,6 +19,9 @@ var belief := Label.new()
 var collect_button: TextureButton
 var upgrade_button: TextureButton
 var repair_button: TextureButton
+var voyage_button: TextureButton
+var ark_button: TextureButton
+var ark_caption: Label
 var row_values: Dictionary = {}
 var current_art := ""
 var row_layout := ""
@@ -35,6 +38,15 @@ func _ready() -> void:
 	action_button("GFX_IWIcon_InfoNoShadow.png","Info",Label.new(),func() -> void: popup.visible=not popup.visible)
 	upgrade_button=action_button("GFX_IWIcon_Boost.png","Upgrade",Label.new(),func() -> void: action_requested.emit("upgrade"))
 	repair_button=action_button("GFX_Pawn_Worker.png",str(labels.get("LOC_BUTTON_SETTLEMENT_ASSIGN_BUILDERS","Builders")),Label.new(),func() -> void: action_requested.emit("repair"))
+	var go: String=labels.get("LOC_BUTTON_DOCK_GO","")
+	voyage_button=action_button("",go,Label.new(),func() -> void: action_requested.emit("voyage"))
+	var caption:=label_at(voyage_button,go,Vector2.ZERO,Vector2(64,60),22)
+	caption.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+	caption.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+	ark_button=action_button("","",Label.new(),func() -> void: action_requested.emit("ark"))
+	ark_caption=label_at(ark_button,"",Vector2.ZERO,Vector2(64,60),16)
+	ark_caption.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+	ark_caption.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
 	add_child(canvas)
 	canvas.mouse_filter=Control.MOUSE_FILTER_IGNORE
 	canvas.size=Vector2(760,500)
@@ -175,18 +187,26 @@ func stat(key: String,value: String,icon: String="") -> void:
 	row_values[key]=value_
 
 
-func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: bool,can_repair: bool=false) -> void:
+func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: bool,can_repair: bool=false,can_voyage: bool=false,ark_action: String="") -> void:
 	if data.is_empty(): hide_selection(); return
 	stats=data.duplicate(true)
 	dock.show()
-	collect_button.get_parent().visible=data.get("kind","")!="shrine"
-	occupancy.get_parent().visible=data.get("kind","")!="shrine"
+	collect_button.get_parent().visible=not data.get("kind","") in ["shrine","ark"]
+	occupancy.get_parent().visible=data.get("kind","")!="shrine" or data.get("site_type")=="Wayland_Ark" and data["capacity"]>0
 	upgrade_button.get_parent().visible=can_upgrade
 	repair_button.get_parent().visible=data.get("entity")=="temple" and not data.get("started",false) and not data.get("complete",false)
 	repair_button.disabled=not can_repair
+	voyage_button.get_parent().visible=can_voyage
+	ark_button.get_parent().visible=not ark_action.is_empty()
+	ark_button.tooltip_text=ark_action
+	ark_caption.text=ark_action
 	collect_button.disabled=not can_collect
 	occupancy.text="%d / %d"%[data["occupants"],data["capacity"]]
-	belief.text=str(data["belief"])
+	var collect_sprite := "GFX_IWIcon_Belief.png"
+	if data.has("available_harvest"): collect_sprite="GFX_IWIcon_Wheat.png" if data["kind"]=="farm" else "GFX_IWIcon_Mining.png"
+	collect_button.texture_normal=textures.get(collect_sprite)
+	collect_button.tooltip_text="Wheat" if data.get("kind")=="farm" else ("Ore" if data.get("kind")=="mine" else "Belief")
+	belief.text=str(data.get("available_harvest",data["belief"]))
 	title.text=str(art.get("title",data.get("name","Abode")))
 	if title.text.is_empty(): title.text=str(data["role"]).capitalize()+" Settlement" if data.get("entity")=="settlement" else ("Shrine" if data.get("kind","")=="shrine" else "Abode")
 	subtitle.text=str(labels.get("LOC_INFO_SUB_BUILDERS","Builders")) if data.get("entity")=="home" and data.get("kind","")=="" else str(data.get("role",data.get("kind",""))).capitalize()
@@ -194,7 +214,7 @@ func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: boo
 	if current_art!=path:
 		current_art=path
 		picture.texture=art.get("texture")
-	var next_layout := "%s:%s:%s:%s:%s:%s"%[data.get("entity","home"),data.get("kind",""),data.get("complete",true),data.get("started",false),int(data.get("food_cost",0))>0,int(data.get("ore_cost",0))>0]
+	var next_layout := "%s:%s:%s:%s:%s:%s:%s"%[data.get("entity","home"),data.get("kind",""),data.get("complete",true),data.get("started",false),int(data.get("food_cost",0))>0,int(data.get("ore_cost",0))>0,data.has("pit")]
 	if row_layout!=next_layout:
 		row_layout=next_layout
 		for child: Node in rows.get_children():
@@ -215,6 +235,15 @@ func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: boo
 		stat("LOC_ROWNAME_%s_RESOURCEPERHOUR"%prefix,"%.0f"%(float(data["harvest_per_second"])*3600))
 		stat("LOC_ROWNAME_%s_TIMEUNTILFINISHED"%prefix,time_text(float(data["harvest_seconds"])))
 		description.text=str(labels.get("LOC_INFO_%s_STATS_DESCRIP"%prefix,""))
+	elif data.has("pit"):
+		var pit: Dictionary=data["pit"]
+		stat("LOC_ROWNAME_PITOFDOOM_SACRIFICED",str(pit["followers"]),"GFX_Pawn_Standard.png")
+		stat("LOC_ROWNAME_PITOFDOOM_GEMSGAINED",str(pit["gems"]),"GFX_IconGemsSmall.png")
+		stat("LOC_ROWNAME_PITOFDOOM_UNHAPPINESSCAUSED","%d%%"%roundi(float(pit["unhappiness"])*100))
+		description.text=str(labels.get(data.get("description_key",""),""))
+	elif data.has("radius"):
+		stat("LOC_INFO_STATDATA_Radius",str(int(data["radius"])))
+		description.text=str(labels.get(data.get("description_key",""),""))
 	elif data.get("kind","")=="shrine":
 		stat("LOC_ROWNAME_SHRINE_BUILDING",str(labels.get("LOC_INFO_TIME_REPAIRED","Repaired")) if data.get("complete",false) else time_text(float(data["repair_seconds"])))
 		stat("Construction","%d%%"%roundi(float(data["progress"])*100))
@@ -223,6 +252,9 @@ func present(data: Dictionary,art: Dictionary,can_collect: bool,can_upgrade: boo
 			if int(data.get("food_cost",0))>0: stat("LOC_ROWNAME_HOME_WHEAT_CONSUMPTION","%d / %d"%[data["wheat"],data["food_cost"]],"GFX_IconWheatRate.png")
 			if int(data.get("ore_cost",0))>0: stat("LOC_ROWNAME_HOME_ORE_CONSUMPTION","%d / %d"%[data["ore"],data["ore_cost"]],"GFX_IconMining.png")
 		description.text=str(labels.get(data.get("description_key",""),labels.get("LOC_INFO_SHRINE_STATS_DESCRIP","")))
+	elif data.get("kind")=="ark":
+		stat("LOC_ROWNAME_HOME_ASTARI",occupancy.text,"GFX_Pawn_Standard.png")
+		description.text=""
 	else:
 		stat("LOC_ROWNAME_HOME_ASTARI",occupancy.text,"GFX_Pawn_Standard.png")
 		if not data["complete"]:

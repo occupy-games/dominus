@@ -45,7 +45,7 @@ func _ready() -> void:
 			group.collapsed = family == "Event maps"
 			groups[family] = group
 		var item := tree.create_item(groups[family])
-		item.set_text(0, str(map["name"]) + ("" if map["available"] else " · unavailable"))
+		item.set_text(0, display_name(map) + ("" if map["available"] else " · unavailable"))
 		item.set_metadata(0, map["id"])
 		if not map["available"]: item.set_custom_color(0, Style.MUTED)
 		items[map["id"]] = item
@@ -81,11 +81,19 @@ func select_map(id: String) -> void:
 		if map["id"] != id: continue
 		selected = id
 		if not items[id].is_selected(0): items[id].select(0)
-		title.text = str(map["name"])
+		title.text = display_name(map)
 		start_button.disabled = not map["available"]
 		details.text = "Source map · %d × %d\n\n" % [int(map["width"]), int(map["width"])]
 		if map["available"]:
-			details.text += "Shape the land and grow your followers from this map’s starting position."
-			if id != "homeworld": details.text += "\n\nUses the shared opening progression."
+			if map.has("playable_through"):
+				details.text += "Rescue the original pair, guide them to land and grow their tribe.\n\nPlayable through "+str(map["playable_through"])+". Later tutorial stages are unfinished."
+			else:
+				details.text += "Shape the land and grow your followers from this map’s starting position."
+				if id == "homeworld7": details.text += "\n\nRepair beacons to expand your influence in Weyworld."
+				elif id != "homeworld": details.text += "\n\nUses the shared opening progression."
 		else: details.text += str(map["unavailable_reason"])
 		return
+
+
+func display_name(map: Dictionary) -> String:
+	return "Weyworld" if map["id"] == "homeworld7" else str(map["name"])

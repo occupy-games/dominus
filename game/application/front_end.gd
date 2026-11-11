@@ -26,6 +26,7 @@ var menu_message := ""
 var example_layout: Dictionary = {}
 var example_camera: Dictionary = {}
 var home_session: Node
+var dock_voyage := false
 var adventure_progress: Dictionary = {}
 var adventure_status := ""
 var adventure_profile: Dictionary = {}
@@ -57,6 +58,9 @@ func _ready() -> void:
 	if "--campaign" in OS.get_cmdline_user_args(): show_campaign()
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--campaign="): show_campaign(argument.trim_prefix("--campaign=").to_lower())
+	if "--homeworld6-opening" in OS.get_cmdline_user_args():
+		var opening := preload("res://infrastructure/campaign_opening_content.gd").definition()
+		if not opening.is_empty(): show_game(true,opening)
 	if "--adventures" in OS.get_cmdline_user_args(): show_adventures()
 
 
@@ -77,7 +81,9 @@ func show_menu() -> void:
 	if is_instance_valid(session):
 		session.set_process(false)
 	var menu := Menu.new()
-	menu.resume_enabled = is_instance_valid(session) or Store.new().exists()
+	var saved := Store.new()
+	saved.database_path=preload("res://infrastructure/save_paths.gd").continuation()
+	menu.resume_enabled = is_instance_valid(session) or saved.exists()
 	menu.status_message = menu_message
 	menu.new_world_requested.connect(func() -> void: show_game(true))
 	menu.campaign_requested.connect(show_campaigns)
@@ -187,17 +193,22 @@ func leave_adventure() -> void:
 	session.free()
 	session=home_session
 	home_session=null
+	dock_voyage=false
 
 
-func show_adventures() -> void:
+func show_adventures(from_dock: bool=false) -> void:
 	leave_adventure()
 	if is_instance_valid(session): session.set_process(false)
 	var menu := preload("res://presentation/menu/adventures_menu.gd").new()
 	menu.missions=AdventureContent.missions()
 	menu.progress=adventure_progress.duplicate(true)
 	menu.status_message=adventure_status
-	menu.back_requested.connect(show_menu)
-	menu.start_requested.connect(show_adventure)
+	if from_dock:
+		menu.back_requested.connect(show_game.bind(false))
+		menu.start_requested.connect(show_dock_adventure)
+	else:
+		menu.back_requested.connect(show_menu)
+		menu.start_requested.connect(show_adventure)
 	replace_screen(menu)
 
 
@@ -226,7 +237,7 @@ func show_game(fresh: bool = true, campaign: Dictionary = {}) -> void:
 		add_child(session)
 		session.changed.connect(on_world_changed)
 		if not fresh:
-			var loaded: Dictionary = session.load_game()
+			var loaded: Dictionary = session.load_game(preload("res://infrastructure/save_paths.gd").continuation())
 			if not loaded.get("ok", false):
 				menu_message = loaded.get("message", "Could not load the saved world.")
 				session.free()
@@ -234,14 +245,22 @@ func show_game(fresh: bool = true, campaign: Dictionary = {}) -> void:
 				show_menu()
 				return
 	if fresh:
+		var saves := preload("res://infrastructure/save_paths.gd")
+		var opening_path := saves.opening()
+		if not campaign.has("story") and session.store.database_path in [opening_path,saves.weyworld()]:
+			session.store.database_path=saves.world()
 		if campaign.is_empty(): session.new_world()
 		else:
 			session.new_campaign(campaign)
-			if not campaign.has("voyage"):
+			if campaign.has("story"):
+				session.store.database_path=opening_path
+			elif not campaign.has("voyage"):
 				var parsed := constants.read()
 				var applied: Dictionary = session.apply_constants(parsed["changes"]) if parsed.get("ok",false) else parsed
 				constants_status=applied.get("message","")
-	if not session.presentation_snapshot().has("voyage"): sync_adventure_rewards(session)
+	var active_snapshot: Dictionary=session.presentation_snapshot()
+	var in_lesson: bool=active_snapshot.has("leash_lesson")
+	if not in_lesson and not active_snapshot.has("voyage"): sync_adventure_rewards(session)
 	var view := GameScreen.new()
 	view.settings_definitions=settings.definitions.duplicate(true)
 	view.settings_values=settings.values.duplicate(true)
@@ -249,13 +268,13 @@ func show_game(fresh: bool = true, campaign: Dictionary = {}) -> void:
 	DirAccess.make_dir_recursive_absolute(view.save_directory)
 	view.save_path=ProjectSettings.globalize_path(session.store.database_path)
 	view.settings_status=settings.error if not settings.error.is_empty() else constants_status
-	view.campaign_mode = session.presentation_snapshot().has("campaign")
+	view.campaign_mode = in_lesson or active_snapshot.has("campaign")
 	var campaign_definition := CampaignContent.for_state(session.presentation_snapshot()) if view.campaign_mode else {}
 	if session.presentation_snapshot().has("voyage"):
 		campaign_definition=AdventureContent.for_state(session.presentation_snapshot())
 		view.voyage_definition=session.presentation_snapshot()["voyage"]["definition"].duplicate(true)
 		view.power_assets=AdventureContent.power_assets(view.voyage_definition)
-		view.voyage_return_requested.connect(show_adventures)
+		view.voyage_return_requested.connect(return_from_adventure)
 		view.voyage_retry_requested.connect(func() -> void: show_adventure(view.voyage_definition["id"],int(view.voyage_definition.get("difficulty",0))))
 		view.voyage_next_requested.connect(func() -> void:
 			var next_id: String = view.voyage_definition.get("next_id","")
@@ -357,11 +376,68 @@ func place_source_model(id: String) -> void:
 
 
 func on_world_changed(snapshot: Dictionary, events: Array) -> void:
-	if screen is GameScreen:
+	if screen is GameScreen and screen.snapshot.has("leash_lesson")==snapshot.has("leash_lesson"):
 		screen.apply_snapshot(snapshot, events)
+	for event: Dictionary in events:
+		if event["type"]=="campaign_autosave": save_opening_card.call_deferred(session)
+		if event["type"]=="campaign_select_mission" and event["mission"]==3: enter_leash_lesson.call_deferred(session)
+		if event["type"]=="campaign_leash_lesson_return": leave_leash_lesson.call_deferred(session)
+		if event["type"]=="campaign_start_first_voyage": launch_dock_voyage.call_deferred(session)
+		if event["type"]=="campaign_open_voyages": show_adventures.call_deferred(true)
+		if event["type"]=="campaign_ark_sail": sail_ark.call_deferred(session)
 	if snapshot.has("voyage"):
 		for event: Dictionary in events:
 			if event["type"]=="victory": record_adventure()
+
+
+func enter_leash_lesson(owner: Node) -> void:
+	if not is_instance_valid(owner) or owner!=session: return
+	if owner.begin_leash_lesson(): show_game(false)
+	elif screen is GameScreen: screen.menu_status("The original Leashing tutorial data is unavailable.")
+
+
+func sail_ark(owner: Node) -> void:
+	if not is_instance_valid(owner) or owner!=session or not owner.presentation_snapshot().has("opening"): return
+	var result: Dictionary=owner.sail_ark()
+	if result.get("ok",false): show_game(false)
+	elif screen is GameScreen: screen.menu_status(result.get("message","The Ark could not sail."))
+
+
+func leave_leash_lesson(owner: Node) -> void:
+	if is_instance_valid(owner) and owner==session and owner.return_from_leash_lesson(): show_game(false)
+
+
+func launch_dock_voyage(owner: Node) -> void:
+	if not is_instance_valid(owner) or owner!=session: return
+	var id:=AdventureContent.first_voyage_id()
+	if id.is_empty(): return
+	show_dock_adventure(id,0)
+
+
+func show_dock_adventure(id: String,difficulty: int) -> void:
+	var owner:=session
+	show_adventure(id,difficulty)
+	dock_voyage=session!=owner
+
+
+func return_from_adventure() -> void:
+	if dock_voyage and is_instance_valid(home_session):
+		session.finish_worker()
+		var voyage: Dictionary=session.presentation_snapshot().get("voyage",{})
+		var first_id:=AdventureContent.first_voyage_id()
+		var first: bool=voyage.get("definition",{}).get("id")==first_id
+		var outcome: String=voyage.get("phase","")
+		leave_adventure()
+		show_game(false)
+		if adventure_progress.has(first_id) or first and outcome=="won": session.finish_first_voyage(true)
+		elif first and outcome=="lost": session.finish_first_voyage(false)
+	else: show_adventures()
+
+
+func save_opening_card(owner: Node) -> void:
+	if not is_instance_valid(owner) or owner!=session: return
+	var result: Dictionary=owner.save_game()
+	if not result.get("ok",false) and screen is GameScreen: screen.menu_status(result.get("message","Could not save."))
 
 
 func change_setting(key: String,value: Variant) -> void:

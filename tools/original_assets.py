@@ -258,6 +258,12 @@ def extract_scenery(source, output):
     return {name: {"source": d["source"], "sha256": d["source_sha256"], "models": len(d["models"])} for name, d in result.items()}
 
 
+FOLLOWER_CLIPS = {
+    "idle": "default_stand_1", "walking": "default_walk_1", "building": "default_hammer_ground_1",
+    "sacrifice_1": "default_sacrifice_1", "sacrifice_2": "default_sacrifice_2",
+}
+
+
 def extract_followers(source, output):
     path = source / "follower.group.bin"
     resources = resource_group(path.read_bytes())
@@ -266,7 +272,7 @@ def extract_followers(source, output):
         raise ValueError("Expected a shared follower skeleton")
     bones = decode_skeleton(next(iter(skeletons.values())))
     clips = {state: decode_animation(resources[iw_hash("CIwAnim")][iw_hash(name)], len(bones))
-             for state, name in [("idle", "default_stand_1"), ("walking", "default_walk_1"), ("building", "default_hammer_ground_1")]}
+             for state, name in FOLLOWER_CLIPS.items()}
     models = []
     for name in ["male_lod1", "female_lod1"]:
         model = decode_model(resources[iw_hash("CIwModel")][iw_hash(name)])
@@ -285,7 +291,7 @@ def extract_followers(source, output):
         models.append(model)
     result = {"source": "follower.group.bin", "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
               "bones": bones, "clips": clips, "models": models,
-              "clip_names": {"idle": "default_stand_1", "walking": "default_walk_1", "building": "default_hammer_ground_1"}}
+              "clip_names": FOLLOWER_CLIPS}
     (output / "followers.json").write_text(json.dumps(result, separators=(",", ":"), allow_nan=False))
     print(f"Original followers: {len(models)} meshes, {len(bones)} bones, {len(clips)} animation clips")
     return {"source": result["source"], "sha256": result["source_sha256"], "models": [m["name"] for m in models], "clips": result["clip_names"]}

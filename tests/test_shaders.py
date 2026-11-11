@@ -5,7 +5,7 @@ import struct
 import unittest
 
 from tools.original_assets import resource_group
-from tools.shaders import decode_shader
+from tools.shaders import decode_shader, terrain_beautify_texture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +45,17 @@ class ShaderSourceTests(unittest.TestCase):
     def test_malformed_shader_lengths_reject(self):
         with self.assertRaises(ValueError):
             decode_shader(struct.pack('<I', 1000) + b'void main(){}\0')
+
+    def test_beautify_terrain_sampler_uses_the_bound_original_texture(self):
+        catalog = json.loads((ROOT / 'game/assets/original/shaders/catalog.json').read_text())
+        port = next(item for item in catalog['runtime_ports'] if item['path'].endswith('/source_land.gdshader'))
+        terrain = next(item for item in catalog['shaders'] if item['name'] == 'shdrTerrain50')
+        self.assertEqual(port['member_sha256'], terrain['member_sha256'])
+        texture = terrain_beautify_texture(ROOT / 'data/godus2_4')
+        self.assertEqual(port['textures'], [texture])
+        self.assertEqual(texture['sampler'], 3)
+        installed = ROOT / 'game/assets/extracted' / texture['source']
+        self.assertEqual(hashlib.sha256(installed.read_bytes()).hexdigest(), texture['sha256'])
 
 
 if __name__ == '__main__':

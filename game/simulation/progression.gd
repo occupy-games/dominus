@@ -4,11 +4,11 @@ extends RefCounted
 const SUPPORTED_POWERS := ["GodPower_Totem", "GodPower_TotemActivate", "GodPower_Beautify", "GodPower_FingerOfGod", "GodPower_PlaceSettlement_1", "GodPower_PlaceSettlement_2", "GodPower_PlaceSettlement_3"]
 const Research = preload("res://simulation/research.gd")
 const Economy = preload("res://simulation/campaign_economy.gd")
-const RULES_VERSION := 12
+const RULES_VERSION := 15
 
 
 static func initialize(rules: Dictionary, terrain: Variant, width: int) -> Dictionary:
-	var result := {"rules":rules.duplicate(true),"discovered":[],"completed":[],"inventory":{},"chests":[],"shrines":rules["shrines"].duplicate(true),"objects":rules["objects"].duplicate(true),"unlocks":[],"powers":[],"max_rank":1,"abode_type":0,"totem_capacity":int(rules["config"].get("InitialTotemCapacity",4)),"totem":{},"beautified":[],"first_card_tick":-1,"age":1,"last_reward":"","revision":0}
+	var result := {"rules":rules.duplicate(true),"discovered":[],"completed":[],"inventory":{},"chests":[],"shrines":rules["shrines"].duplicate(true),"objects":rules["objects"].duplicate(true),"unlocks":[],"powers":[],"max_rank":1,"abode_type":0,"totem_capacity":int(rules["config"].get("InitialTotemCapacity",4)),"totem":{},"first_card_tick":-1,"age":1,"last_reward":"","revision":0}
 	for original: Dictionary in rules["chests"]:
 		var chest := original.duplicate(true)
 		chest["height"] = int(chest.get("source_height",terrain[chest["z"]*width+chest["x"]]))-int(chest["depth"])
@@ -30,13 +30,14 @@ static func initialize(rules: Dictionary, terrain: Variant, width: int) -> Dicti
 
 static func refresh(state: Dictionary) -> void:
 	var p: Dictionary = state["progression"]
+	var resources:=preload("res://simulation/weyworld.gd").production_counts(state) if p["rules"].has("weyworld") else state
 	p["next_population"]=0
 	for row: Array in state["campaign"]["population_unlocks"]:
 		if row.size()>1 and str(row[0]).is_valid_int() and int(row[0])>state["followers"].size():
 			if p["next_population"]==0 or int(row[0])<int(p["next_population"]): p["next_population"]=int(row[0])
 		if row.size()>1 and str(row[0]).is_valid_int() and state["followers"].size()>=int(row[0]) and row[1] != "Card_Expansion" and not p["rules"].get("research_cards",{}).has(row[1]): discover(p,row[1])
 	for level: Dictionary in p["rules"].get("research_levels",[]):
-		var total: int = state["followers"].size() if not level.has("resource") else int(state.get(level["resource"],0))
+		var total: int = state["followers"].size() if not level.has("resource") else int(resources.get(level["resource"],0))
 		if total>=int(level["population"]) and p["rules"].get("research_cards",{}).has(level["card"]): discover(p,level["card"])
 	if p["first_card_tick"]>=0 and state["tick"]>=p["first_card_tick"]:
 		for id: String in ordered_keys(p["rules"]["cards"]):
@@ -57,8 +58,6 @@ static func refresh(state: Dictionary) -> void:
 	var effect_unlocks: Array = p["rules"].get("economy",{}).get("production_modifiers",{}).keys()+p["rules"].get("economy",{}).get("abode_modifiers",{}).keys()
 	for unlock: String in effect_unlocks:
 		if preload("res://simulation/source_unlocks.gd").enabled(p,unlock) and not unlock in p["unlocks"]: p["unlocks"].append(unlock)
-	for area: Dictionary in p["beautified"].duplicate():
-		if state["tick"]>=area["until"]: p["beautified"].erase(area)
 
 
 static func discover(p: Dictionary, id: String) -> void:
@@ -67,6 +66,32 @@ static func discover(p: Dictionary, id: String) -> void:
 		p["discovered"].append(id)
 		p["age"] = maxi(p["age"],int(p["rules"]["cards"][id]["age"]))
 		p["revision"] += 1
+
+
+static func inherit_research(state: Dictionary,previous: Dictionary) -> void:
+	var p: Dictionary=state["progression"]
+	var cards: Dictionary=p["rules"]["cards"]
+	for id: String in previous.get("discovered",[]):
+		if cards.has(id) and not id in p["discovered"]: p["discovered"].append(id)
+	for id: String in previous.get("completed",[]):
+		if id in p["discovered"] and not id in p["completed"]: p["completed"].append(id)
+	state["campaign"]["cards"]=p["completed"].duplicate()
+	for id: String in previous.get("inventory",{}):
+		var resource:=Research.canonical(p,id)
+		if p["rules"]["stickers"].has(resource) and cards.has(resource):
+			p["inventory"][resource]=int(p["inventory"].get(resource,0))+int(previous["inventory"][id])
+	for id: String in previous.get("research",{}):
+		var rule:=Research.definition(p,id)
+		if not rule.is_empty() and id in p["discovered"]:
+			p["research"][id]=mini(int(previous["research"][id]),int(rule["research_needed"]))
+	for key: String in ["assigned_resources","reward_history"]:
+		for id: String in previous.get(key,{}):
+			if not cards.has(id): continue
+			var value: Variant=previous[key][id]
+			p[key][id]=value.duplicate(true) if value is Dictionary else value
+	for key: String in ["max_rank","abode_type","totem_capacity","age"]:
+		if previous.has(key): p[key]=previous[key]
+	p["revision"]+=1
 
 
 static func inspect(state: Dictionary, command: Dictionary) -> Dictionary:
@@ -223,6 +248,11 @@ static func valid(p: Variant, width: int) -> bool:
 	for key in ["cards","unlocks","config"]:
 		if not p["rules"].get(key) is Dictionary: return false
 	if p["rules"].has("temple_repair_rules") and not preload("res://simulation/source_temple_repair.gd").valid_rules(p["rules"]["temple_repair_rules"]): return false
+	if p["rules"].has("registered_influence_rules") and not preload("res://simulation/source_influence.gd").valid_rules(p["rules"]["registered_influence_rules"]): return false
+	if p["rules"].has("beautify_rules") and not preload("res://simulation/source_beautify.gd").valid_rules(p["rules"]["beautify_rules"]): return false
+	if p["rules"].has("abode_beauty") and not preload("res://simulation/campaign_abode_beauty.gd").valid_rules(p["rules"]["abode_beauty"]): return false
+	var paint_remainder: Variant=p.get("beautify_cost_remainder",0.0)
+	if not (paint_remainder is int or paint_remainder is float) or not is_finite(float(paint_remainder)) or paint_remainder<0.0 or paint_remainder>=1.0: return false
 	if p["rules"]["config"].has("templeFixerFalloff"):
 		var exponent: String=str(p["rules"]["config"]["templeFixerFalloff"])
 		if not exponent.is_valid_float() or not preload("res://simulation/construction_work.gd").valid_exponent(float(exponent)): return false
@@ -231,7 +261,7 @@ static func valid(p: Variant, width: int) -> bool:
 	for plot: Dictionary in p["rules"].get("economy",{}).get("plots",{}).values():
 		if plot.has("new_builder_contribution") and not preload("res://simulation/construction_work.gd").valid_exponent(plot["new_builder_contribution"]): return false
 	if not Research.valid(p) or not Economy.valid(p) or not preload("res://simulation/campaign_chests.gd").valid(p): return false
-	for key in ["discovered","completed","chests","shrines","objects","powers","unlocks","beautified"]:
+	for key in ["discovered","completed","chests","shrines","objects","powers","unlocks"]:
 		if not p.get(key) is Array or p[key].size()>2048: return false
 	for key in ["max_rank","abode_type","totem_capacity","age","first_card_tick","revision"]:
 		if not (p.get(key) is int or p.get(key) is float) or not is_finite(float(p[key])): return false
@@ -250,6 +280,7 @@ static func valid(p: Variant, width: int) -> bool:
 				if not (entry.get(axis) is int or entry.get(axis) is float) or not is_finite(float(entry[axis])) or entry[axis]<0 or entry[axis]>=width: return false
 			if group=="chests" and (not entry.get("opened") is bool or not (entry.get("height") is int or entry.get("height") is float) or not entry.get("card") is String): return false
 			if group=="shrines":
+				if entry.has("repaired") and (not entry["repaired"] is bool or entry["repaired"] and not entry.get("started",false)): return false
 				for field: String in ["width","depth"]:
 					if not entry.has(field): continue
 					var extent: Variant=entry[field]

@@ -277,7 +277,59 @@ The installed engine is Godot `4.8.beta2.official.cafc17a19`.
 - [x] Port original timed temple affiliation and circle/sphere containment.
   Verify 191 geometry cases, 101 affiliation cases and 64 saved continuation
   steps, including exact deadline boundaries, last-match ownership and source
-  radius-column binding. Keep active-pool ownership and frame composition pending.
+  radius-column binding. Compose affiliation, terrain/elevation and repair in the
+  original order, comparing another 176 native cases and 128 saved continuation
+  steps. Keep source spatial services, active-pool ownership, deferred reward
+  composition, spatial/motion services and full campaign wiring pending.
+- [x] Recover all eight original shrine upgrade rows and port their modifier
+  masks, source unlock predicates, family-wide bit ordering and first-activation
+  invalidation. Verify 90 native cases and 48 saved steps, then compose actual
+  refresh with affiliation/terrain/repair in another 174 cases and 128 steps.
+  Keep source spatial indexing and spatial invalidation internals pending.
+- [x] Resolve original shrine effects for explicit follower/job and housing
+  stat queries using native column bindings and eligibility flags. Compare 13
+  parser cases, eight inherited-area queries, 179 actual stat cases and 48
+  moving-actor steps with saved inputs. Compose actual upgrade refresh and
+  containment; preserve overlap deduplication and all six monastery classes.
+  Keep base-row resolution, global modifiers, route-grid propagation and full
+  actor lifetime integration pending.
+- [x] Port original bulk follower mask propagation, preserving active-reference
+  clearing, permanent masks, shared references, source spatial request flags,
+  actual containment and ordered candidate release. Compare 75 native cases and
+  64 saved moving steps, then consume the stored masks in actual stat getters.
+  Port the house callback's reference-gated geometry notification in 118 further
+  native cases and 32 saved steps. Keep source candidate indexing/allocation,
+  terrain-override ownership, route-grid updates and actor lifetime wiring pending.
+- [x] Port the original building foundation mismatch scan, including inclusive
+  bounds, strict absolute threshold, large-anchor float32 conversion and
+  overlay-first terrain reads. Compare 276 native cases and 48 saved moving
+  steps. Compose actual foundation scanning with house mask refresh, reference
+  gate and housing getter in another 118 cases and 48 steps.
+- [x] Port the house foundation damage, recovery, work and completion frame.
+  Compare 244 native cases and 64 saved steps, including strict thresholds
+  and callback order.
+- [x] Resolve the original build-time target inside that frame with ordered
+  progression modifiers, global and per-house overrides and the farm gate.
+  Compare 120 native cases and 20 saved steps.
+- [x] Select original base stat rows for standalone and attached settlement
+  houses. Compare 90 row cases and 36 composed construction frames.
+- [x] Apply stored shrine masks and the six original environment buffs to
+  recovered house fields. Compare 192 contributions and 102 stat queries.
+- [x] Refresh house surroundings in source pool order. Compare full and area
+  refresh, ordered query release, strict boundaries and saved continuation.
+- [x] Read and write the original sparse map fields, bind them to the
+  house refresh and existing-plot query, and preserve them across influence
+  rebuild and save.
+- [x] Apply the original Beautify terrain brush from the playable campaign
+  command. Compare the charge, coastline behavior, blight clearing and
+  timeout writes. Expire the terrain fields on the original countdown and
+  verify fixed-tick expiry through SQLite reload.
+- [x] Connect the original Beautify area refresh to campaign abodes. Use the
+  painted fraction for belief production and inspection, and resample cached
+  abodes after expiry.
+- [x] Port the original Beautify terrain shimmer with the verified sampler 3
+  texture. Check paid casts, save restoration and expiry on the rendered
+  terrain. The separate particle burst and other spatial effects remain pending.
 - [x] Restore single-click home belief collection and source-gated drag sweeps;
   validate each spend in simulation and avoid repeated commands per gesture.
 - [x] Prefer exposed, affordable, reachable shrine repairs over automatic homes.

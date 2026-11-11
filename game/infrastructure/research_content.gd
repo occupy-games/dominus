@@ -74,9 +74,10 @@ static func extend_rules(rules: Dictionary, scope_name: String = "initialworldse
 		if rules["cards"].has(level["card"]): continue
 		for binding: String in rules["card_bindings"].get(level["card"],[]):
 			if rules["cards"].has(binding): level["card"]=binding; break
-	for level: Dictionary in source["scopes"]["initialworldsetup"]["population_levels"]:
-		if card_definitions.has(level["card"]) and not scope["cards"].has(level["card"]) and rules["research_cards"].has(level["card"]):
-			rules["research_levels"].append(level.duplicate(true))
+	if scope_name!="initialworldsetup7":
+		for level: Dictionary in source["scopes"]["initialworldsetup"]["population_levels"]:
+			if card_definitions.has(level["card"]) and not scope["cards"].has(level["card"]) and rules["research_cards"].has(level["card"]):
+				rules["research_levels"].append(level.duplicate(true))
 	rules["economy_source"]={"configuration":source["configuration"].duplicate(true),"tables":source["tables"].duplicate(true)}
 	rules["economy"]={"settlements":{},"plots":{},"jobs":{},"production_modifiers":{},"abode_modifiers":{},"research_effects":[]}
 	var economy: Dictionary = rules["economy"]

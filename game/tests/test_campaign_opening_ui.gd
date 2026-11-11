@@ -127,6 +127,152 @@ func run() -> void:
 	var instances_after := 0
 	for batch: MultiMeshInstance3D in rocks.tiles[tile_key].get_children(): instances_after+=batch.multimesh.instance_count
 	check(instances_after==instances_before-1,"Detached source visibility must remove exactly one complete boulder from its rendering batch")
+	var catalog := preload("res://infrastructure/asset_catalog.gd").new()
+	catalog.read_models()
+	screen.world_view.resolve_unit=catalog.unit_data
+	var chest_snapshot := world.snapshot(false)
+	chest_snapshot["progression"]["chests"]=[{"id":"reward:5","type":"treasure1","x":177,"z":147,"height":1.0,"rotation":180.0,"card":"Sticker_Tools_1","opened":false,"opening":false,"native":true,"exposed":true}]
+	screen.world_view.state=chest_snapshot
+	screen.world_view.terrain_region=Rect2i(172,142,10,10)
+	screen.world_view.update_progression()
+	check(screen.world_view.progression_nodes.has("chest:reward:5"),"The source first chest must render with its recovered model")
+	check(screen.world_view.progression_at(Vector2(177,147))=={"type":"open_chest","id":"reward:5"},"The exposed source chest must offer its ordinary command")
+	var chest_actor: Node3D=screen.world_view.progression_nodes["chest:reward:5"]
+	chest_actor.apply_animation(0.2)
+	check(chest_actor.last_clip=="chest_freed","The source exposure state must select the original freed animation")
+	chest_snapshot["progression"]["chests"][0]["opening"]=true
+	screen.world_view.update_progression()
+	chest_actor.apply_animation(0.2)
+	check(chest_actor.last_clip=="chest_open" and not chest_actor.looped and screen.world_view.progression_at(Vector2(177,147)).get("type")!="open_chest","The native opening must play its source animation once and reject repeat picking")
+	chest_snapshot["progression"]["chests"][0]["opened"]=true
+	screen.world_view.update_progression()
+	check(screen.world_view.progression_nodes.has("chest:reward:5"),"The granted source chest must remain until its native disappearance delay")
+	chest_snapshot["progression"]["chests"]=[]
+	screen.world_view.update_progression()
+	check(not screen.world_view.progression_nodes.has("chest:reward:5"),"The native removal snapshot must remove the complete chest actor")
+	# Isolated Timeline UI fixture. The complete played trail is verified by
+	# test_promised_land; these commands exercise the normal HUD and drag route.
+	var opening: Dictionary=world._state["opening"]
+	var level_card: String=data["story"]["growth_population_card"]["id"]
+	opening["level_card"]=level_card
+	opening["scheduled"]=[]
+	opening["promised_step"]=11
+	opening["globals"]["onStartPlayTriggered"]=true
+	preload("res://simulation/progression.gd").discover(world._state["progression"],level_card)
+	preload("res://simulation/progression.gd").reward(world._state,"Sticker_Tools_1")
+	var tutorial := preload("res://simulation/campaign_opening.gd").new()
+	tutorial.configure(world,world._state,[])
+	tutorial.set_timeline_step(0)
+	screen.apply_snapshot(world.snapshot())
+	commands.clear()
+	screen.original_hud.collection_button.pressed.emit()
+	check(commands==[{"type":"campaign_timeline_open"}] and not screen.progression_panel.visible,"The original corner button must request the authoritative Timeline opening")
+	var opened: Array=world.step(commands)
+	screen.apply_snapshot(world.snapshot(),opened)
+	check(screen.progression_panel.visible and screen.progression_panel.selected==level_card and screen.campaign_prompt.messages.has(2003),"The source open command must display the card and original explanation")
+	commands.clear()
+	screen.progression_panel.close_button.pressed.emit()
+	check(commands.is_empty() and screen.progression_panel.visible and screen.progression_panel.close_button.disabled and not screen.progression_panel.resource_slots["Sticker_Tools_1"].resource_drag_enabled and not screen.progression_panel.detail_card.accept_resource.call("Sticker_Tools_1")["ok"],"The actual close button, resource drag and drop preview must respect the source explanation lock")
+	for id in [2003,2004,2005]:
+		commands.clear()
+		screen.campaign_prompt.messages[id].pressed.emit()
+		var updates: Array=world.step(commands)
+		screen.apply_snapshot(world.snapshot(),updates)
+	await process_frame
+	screen.campaign_prompt.layout_messages()
+	check(screen.campaign_prompt.z_index>screen.progression_panel.z_index and screen.progression_panel.resource_slots["Sticker_Tools_1"].resource_drag_enabled and screen.progression_panel.detail_card.accept_resource.call("Sticker_Tools_1")["ok"],"The source explanations must stay above the Timeline and enable the actual typed drop")
+	var source_tip: Control=screen.campaign_prompt.messages[2007]
+	var resource_target: Rect2=screen.tutorial_target(data["story"]["messages"]["2007"])
+	check(resource_target.has_area() and root.get_visible_rect().encloses(source_tip.get_global_rect()) and source_tip.mouse_filter==Control.MOUSE_FILTER_IGNORE,"The original sticker hint must anchor to its resource tray and leave the drag target accessible")
+	commands.clear()
+	screen.progression_panel.detail_card.assign_resource.call("Sticker_Tools_1")
+	check(commands==[{"type":"research_card","card":level_card,"sticker":"Sticker_Tools_1"}],"The real card drop must submit its typed assignment command")
+	var assigned: Array=world.step(commands)
+	screen.apply_snapshot(world.snapshot(),assigned)
+	check(screen.progression_panel.visible and screen.campaign_prompt.messages.has(2008),"Card completion must preserve the source Timeline until its exit is requested")
+	commands.clear()
+	screen.progression_panel.close_button.pressed.emit()
+	check(commands==[{"type":"campaign_timeline_close"}] and screen.progression_panel.visible,"The unlocked source exit must request a command before hiding")
+	var closed: Array=world.step(commands)
+	screen.apply_snapshot(world.snapshot(),closed)
+	check(not screen.progression_panel.visible and opening["timeline_step"]==4,"The accepted original exit must close presentation and return to Homeworld")
+	# Detached render fixture for the completed but unactivated source Beacon.
+	var beacon := world.snapshot()
+	beacon["opening"]["phase"]="shrine"
+	beacon["opening"]["shrine_step"]=3
+	var source_site: Dictionary=beacon["progression"]["shrines"].filter(func(site: Dictionary) -> bool: return site["id"]==beacon["opening"]["definition"]["first_shrine_id"])[0]
+	source_site["started"]=true
+	source_site["repaired"]=true
+	beacon["opening"]["shrine_claims"]=[source_site["id"]]
+	screen.world_view.apply_campaign_camera({"action":"SetCamera","args":[source_site["x"],source_site["z"]]})
+	screen.apply_snapshot(beacon)
+	var beacon_card: TextureButton=screen.shrine_rewards.get(source_site["id"],{}).get("button")
+	check(is_instance_valid(beacon_card) and beacon_card.visible and beacon_card.source["id"]=="Card_Expansion","The pending Beacon must display its original card above the authored site")
+	commands.clear()
+	beacon_card.pressed.emit()
+	check(commands==[{"type":"campaign_activate_shrine","id":source_site["id"]}],"Clicking the Beacon card must submit the authoritative activation command")
+	source_site["complete"]=true
+	beacon["opening"]["shrine_claims"]=[]
+	screen.apply_snapshot(beacon)
+	check(not screen.shrine_rewards.has(source_site["id"]),"The activated Beacon must remove its pending card")
+	var belief := world.snapshot()
+	var belief_card: String=data["story"]["shrine_population_card"]["id"]
+	belief["progression"]["discovered"].append(belief_card)
+	belief["opening"]["phase"]="belief"
+	belief["opening"]["belief_step"]=0
+	belief["opening"]["messages"]=[{"id":4007,"callback":null,"visible_tick":belief["tick"]+300}]
+	screen.apply_snapshot(belief)
+	check(not screen.campaign_prompt.messages.has(4007),"The original population-card hint must wait for its authored delay")
+	belief["tick"]+=300
+	screen.apply_snapshot(belief)
+	check(screen.campaign_prompt.messages.has(4007),"The original population-card hint must appear at its authored tick")
+	commands.clear()
+	screen.original_hud.card_nodes[belief_card].pressed.emit()
+	check(commands==[{"type":"campaign_show_level_card"}],"The source Power of Prayer portrait must request its authoritative card action")
+	belief["opening"]["belief_step"]=1
+	belief["opening"]["messages"]=[{"id":4001,"callback":null}]
+	screen.apply_snapshot(belief,[{"type":"campaign_show_card","card":belief_card}])
+	check(screen.progression_panel.visible and screen.progression_panel.selected==belief_card and screen.campaign_prompt.messages.has(4001),"The Power of Prayer action must show its original card and explanation")
+	commands.clear()
+	screen.progression_panel.close_button.pressed.emit()
+	check(commands==[{"type":"campaign_dismiss_level_card"}],"Closing Power of Prayer must submit the source dismissal command")
+	belief["opening"]["belief_step"]=3
+	belief["opening"]["belief_hud_hidden"]=false
+	belief["belief"]=580
+	belief["opening"]["messages"]=[{"id":4004,"callback":{"builtin":"nextBeliefStep"}}]
+	screen.apply_snapshot(belief)
+	check(screen.original_hud.belief.visible and screen.original_hud.belief.text=="580" and screen.tutorial_target(data["story"]["messages"]["4004"]).has_area(),"The source counter explanation must point to the actual visible belief balance")
+	commands.clear()
+	screen.campaign_prompt.messages[4004].pressed.emit()
+	check(commands==[{"type":"campaign_ack","id":4004}],"The source counter hint must advance through an ordinary acknowledgement command")
+	var discovery := world.snapshot()
+	var pit_id: String=data["story"]["discovery_site_id"]
+	var pit: Dictionary=discovery["progression"]["shrines"].filter(func(site: Dictionary) -> bool: return site["id"]==pit_id)[0]
+	discovery["opening"]["phase"]="discovery"
+	discovery["opening"]["discovery_step"]=2
+	discovery["opening"]["pit_step"]=0
+	discovery["opening"]["messages"]=[]
+	pit["started"]=true
+	pit["repaired"]=true
+	discovery["opening"]["shrine_claims"]=[pit_id]
+	screen.world_view.apply_campaign_camera({"action":"SetCamera","args":[pit["x"],pit["z"]]})
+	screen.apply_snapshot(discovery)
+	var pit_card: TextureButton=screen.shrine_rewards.get(pit_id,{}).get("button")
+	check(is_instance_valid(pit_card) and pit_card.visible and pit_card.source["id"]=="Card_PitOfSacrifice","The completed Pit must display its own original card")
+	commands.clear()
+	pit_card.pressed.emit()
+	check(commands==[{"type":"campaign_activate_shrine","id":pit_id}],"The Pit portrait must submit its own source site ID")
+	pit["complete"]=true
+	discovery["opening"]["shrine_claims"]=[]
+	discovery["opening"]["pit_card_open"]=true
+	discovery["opening"]["messages"]=[{"id":5101,"callback":null}]
+	discovery["progression"]["discovered"].append(pit["card"])
+	discovery["progression"]["completed"].append(pit["card"])
+	screen.apply_snapshot(discovery,[{"type":"campaign_show_card","card":pit["card"]}])
+	check(not screen.shrine_rewards.has(pit_id) and screen.progression_panel.visible and screen.progression_panel.selected==pit["card"] and screen.campaign_prompt.messages.has(5101),"The Pit reward must show its own card and original explanation")
+	commands.clear()
+	screen.progression_panel.close_button.pressed.emit()
+	check(commands==[{"type":"campaign_dismiss_level_card"}],"Closing the Pit card must forward the original dismissal")
 	screen.free()
 	await process_frame
 	print("Source opening prompts and original animation roles: %d failures"%failures)

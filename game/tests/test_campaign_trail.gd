@@ -15,8 +15,30 @@ func check(value: bool,message: String) -> void:
 	if not value: failures+=1; push_error(message)
 
 
+func verify_stranded_builder(source: Dictionary) -> void:
+	var world := World.new()
+	world.initialize({},RandomNumberGenerator.new())
+	var width: int=world._state["width"]
+	world._state["terrain"].fill(1)
+	for z in range(width): world._state["terrain"][z*width+16]=4
+	world._state["terrain_revision"]+=1
+	var follower: Dictionary=world._state["followers"][0]
+	follower.merge({"x":15.0,"z":16.0,"state":"waiting","job":999,"work_x":18,"work_z":16,"path":[]},true)
+	check(world._route(Vector2i(15,16),Vector2i(18,16)).is_empty(),"The stranded-Builder fixture must have a real impassable cliff")
+	var snapshot := world.snapshot(false)
+	snapshot["opening"]={"definition":source,"submerged_levels":{}}
+	var before := world.export_state()
+	var command := Player.new().grow_promised_land(world,snapshot)
+	check(world.export_state()==before,"Finding a Builder connection must preserve simulation state and RNG")
+	check(command.get("type")=="sculpt_drag" and world.inspect(command)["ok"],"Self-play must reconnect a stranded Builder with an accepted ordinary terrain drag")
+	if command.is_empty(): return
+	world.step([command])
+	check(not world._route(Vector2i(15,16),Vector2i(18,16)).is_empty(),"The accepted geometry edit must open a walkable route to the Builder's existing job")
+
+
 func run() -> void:
 	var definition := preload("res://infrastructure/campaign_opening_content.gd").definition()
+	verify_stranded_builder(definition["story"])
 	var world := World.new()
 	var random := RandomNumberGenerator.new()
 	random.seed=2026

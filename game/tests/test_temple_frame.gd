@@ -40,6 +40,10 @@ func test_name() -> String:
 	return "Original temple pre-work frame"
 
 
+func restore_state(saved: Variant) -> Dictionary:
+	return Frame.restore(saved)
+
+
 func additional_checks() -> void:
 	pass
 
@@ -59,23 +63,23 @@ func _initialize() -> void:
 	for case: Dictionary in fixture["cases"]:
 		example=case
 		for saved: bool in [false,true]:
-			current=Frame.restore(case["state"])
-			if saved: current=Frame.restore(codec.decode_numbers(JSON.parse_string(JSON.stringify(codec.encode_numbers(current)))))
+			current=restore_state(case["state"])
+			if saved: current=restore_state(codec.decode_numbers(JSON.parse_string(JSON.stringify(codec.encode_numbers(current)))))
 			check(advance_case(),"Valid native temple frame "+str(case["name"]))
 			compare(case["expected"],"Native frame "+str(case["name"]))
 			check(Numbers.canonical_numbers(queries)==Numbers.canonical_numbers(case["expected"]["queries"]),"Native frame footprint sample order "+str(case["name"]))
 	var steps := 0
 	for sequence: Dictionary in fixture["sequences"]:
 		for save_at in range(sequence["steps"].size()+1):
-			current=Frame.restore(sequence["initial"])
+			current=restore_state(sequence["initial"])
 			for index in range(sequence["steps"].size()):
-				if index==save_at: current=Frame.restore(codec.decode_numbers(JSON.parse_string(JSON.stringify(codec.encode_numbers(current)))))
+				if index==save_at: current=restore_state(codec.decode_numbers(JSON.parse_string(JSON.stringify(codec.encode_numbers(current)))))
 				example=sequence["steps"][index]
 				check(advance_case(),"A saved temple frame must continue")
 				compare(example["expected"],"Frame sequence")
 				check(Numbers.canonical_numbers(queries)==Numbers.canonical_numbers(example["expected"]["queries"]),"Restored frame footprint samples")
 				if save_at==0: steps+=1
-	current=Frame.restore(fixture["cases"][0]["state"])
+	current=restore_state(fixture["cases"][0]["state"])
 	var before := current.duplicate(true)
 	example={"workers":-1,"delta":.1}
 	check(not advance_case() and current==before and events.is_empty() and queries.is_empty(),"An invalid worker count must reject before state or service changes")
@@ -84,7 +88,7 @@ func _initialize() -> void:
 	for changes: Dictionary in [{"work_presence":NAN},{"height":INF},{"motion_handle":-1},{"cooldown":1e40},{"handle":65535}]:
 		var invalid := before.duplicate(true)
 		invalid.merge(changes,true)
-		check(Frame.restore(invalid).is_empty(),"Invalid frame state must not restore")
+		check(restore_state(invalid).is_empty(),"Invalid frame state must not restore")
 	additional_checks()
 	print("%s: %d native cases, %d sequence steps, saved continuation, %d failures"%[test_name(),fixture["cases"].size(),steps,failures])
 	quit(1 if failures else 0)

@@ -38,7 +38,7 @@ def extract(raw, overrides):
     if any(not math.isfinite(value) or value<0 for value in configuration.values()) or sum(configuration[key] for key in LENGTHS)<=0:
         raise ValueError('Invalid original day-cycle configuration')
     functions = {}
-    for name in ['Midday','Sunset','Midnight']:
+    for name in ['Sunrise','Midday','Sunset','Midnight']:
         text_offset = raw.index(name.encode()+b'\0')
         reference = struct.pack('<I',address(text_offset))
         candidates = []
@@ -55,6 +55,14 @@ def extract(raw, overrides):
         registration,wrapper,start=candidates[0]
         function=wrapper+5+struct.unpack_from('<i',raw,start+1)[0]
         begin=offset(function)
+        if name=='Sunrise':
+            if raw[begin:begin+2]!=b'\xd9\x05' or raw[begin+6:begin+7]!=b'\xc3':
+                raise ValueError('Unknown Sunrise routine')
+            key=names[struct.unpack_from('<I',raw,begin+2)[0]]
+            functions[name]={'terms':[[key,1.0]],'value':configuration[key],
+                             'registration':hex(address(registration)),'wrapper':hex(wrapper),
+                             'routine':hex(function),'bytes':raw[begin:begin+7].hex()}
+            continue
         cursor=begin
         if raw[cursor:cursor+4]!=bytes.fromhex('55 8b ec 51'): raise ValueError('Unknown daytime prologue')
         cursor+=4

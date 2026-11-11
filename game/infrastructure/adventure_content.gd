@@ -11,6 +11,12 @@ static func missions() -> Array:
 	return data.get("missions", []).duplicate(true) if data is Dictionary else []
 
 
+static func first_voyage_id() -> String:
+	var first: Array=missions().filter(func(entry: Dictionary) -> bool: return entry["family"]=="event_01" and int(entry["order"])==1)
+	if first.size()==1 and first[0]["available"]: return first[0]["id"]
+	return ""
+
+
 static func definition(id: String, difficulty: int = 0) -> Dictionary:
 	var selected := {}
 	for entry: Dictionary in missions():

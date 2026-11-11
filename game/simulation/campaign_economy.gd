@@ -9,6 +9,27 @@ static func configuration(state: Dictionary) -> Dictionary:
 	return state.get("progression",{}).get("rules",{}).get("economy",{})
 
 
+static func place_free_harvest(state: Dictionary, sites: Array) -> void:
+	for site: Dictionary in sites:
+		var plot := site.duplicate(true)
+		var x := int(plot["anchor_x"])
+		var z := int(plot["anchor_z"])
+		var half := int(plot["span"])/2
+		plot.merge({"id":state["next_id"],"x":x-half,"z":z-half,"progress":plot["build_ticks"],
+			"stored":0,"residents":0,"builder":-1,"work_x":x,"work_z":z,"stalled":false,
+			"access_path":[],"awaiting_influence":true,"harvest_accumulator":0})
+		state["homes"].append(plot)
+		state["next_id"]+=1
+
+
+static func fill_free_harvest(state: Dictionary) -> void:
+	for plot: Dictionary in state["homes"]:
+		if not plot.get("awaiting_influence",false): continue
+		if not preload("res://simulation/influence.gd").contains(state,plot["anchor_x"],plot["anchor_z"]): continue
+		plot["harvest_accumulator"]=maxf(plot["harvest_accumulator"],plot["max_belief"])
+		plot["awaiting_influence"]=false
+
+
 static func settlement(state: Dictionary,id: int) -> Dictionary:
 	for item: Dictionary in state["progression"].get("settlements",[]):
 		if int(item["id"])==id: return item
@@ -93,6 +114,49 @@ static func worker_available(state: Dictionary,agent: Dictionary,item: Dictionar
 	return agent["job"]==-1 and not agent.has("workplace") and agent["state"]!="worshipping" and Vector2(agent["x"],agent["z"]).distance_to(Vector2(item["x"],item["z"]))<=float(item["radius"])
 
 
+static func plan_existing_plot(world: RefCounted,state: Dictionary,item: Dictionary,workers: Array) -> Dictionary:
+	if item["role"]=="builder": return {}
+	var kind := "farm" if item["role"]=="farmer" else "mine"
+	var destination := delivery_point(state,item)
+	var staffed := {}
+	for agent: Dictionary in state["followers"]:
+		if agent.has("workplace"): staffed[int(agent["workplace"])]=true
+	for field: Dictionary in state["homes"]:
+		if field.get("kind","")!=kind or field["progress"]<field["build_ticks"] or staffed.has(int(field["id"])): continue
+		if field.get("settlement_id",item["id"])!=item["id"]: continue
+		var center := Vector2(field.get("anchor_x",field["x"]),field.get("anchor_z",field["z"]))
+		if center.distance_to(Vector2(item["x"],item["z"]))>float(item["radius"]) or not world.can_act_at(center.x,center.y): continue
+		var plot := Rect2i(field["x"],field["z"],field["span"],field["span"])
+		var approaches: Array[Vector2i]=[]
+		for z in range(plot.position.y,plot.end.y): approaches.append_array([Vector2i(plot.position.x-1,z),Vector2i(plot.end.x,z)])
+		for x in range(plot.position.x,plot.end.x): approaches.append_array([Vector2i(x,plot.position.y-1),Vector2i(x,plot.end.y)])
+		for work: Vector2i in approaches:
+			if world.height_at(work.x,work.y)<=0 or world._occupied(work.x,work.y): continue
+			if not field.get("direct_harvest",false) and work!=destination and world._route(work,destination).is_empty(): continue
+			for worker: Dictionary in workers:
+				var start := Vector2i(roundi(worker["x"]),roundi(worker["z"]))
+				var path: Array=world._route(start,work)
+				if start==work or not path.is_empty():
+					return {"ok":true,"cost":0,"reason":"","field":field,"worker":worker,"work":work,"path":path,"settlement":item}
+	return {}
+
+
+static func delivery_point(state: Dictionary,item: Dictionary) -> Vector2i:
+	for home: Dictionary in state["homes"]:
+		if int(home["id"]) in item["members"]: return Vector2i(home["work_x"],home["work_z"])
+	return Vector2i(item["x"],item["z"])
+
+
+static func staff_existing_plot(state: Dictionary,plan: Dictionary) -> void:
+	var field: Dictionary=plan["field"]
+	var worker: Dictionary=plan["worker"]
+	var work: Vector2i=plan["work"]
+	field.merge({"work_x":work.x,"work_z":work.y,"settlement_id":plan["settlement"]["id"]},true)
+	worker.merge({"workplace":field["id"],"settlement_id":field["settlement_id"],
+		"profession":plan["settlement"]["role"],"path":plan["path"],"state":"walking","carrying":0},true)
+	state["progression"]["revision"]+=1
+
+
 static func harvest_rate(state: Dictionary, field: Dictionary) -> float:
 	var rate := float(field["harvest_rate"])
 	var key := "%s:%d"%[field["kind"],int(field["rank"])]
@@ -116,7 +180,7 @@ static func spends_resource(state: Dictionary, resource: String) -> bool:
 	return Unlocks.enabled(state["progression"],gate)
 
 
-static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary) -> bool:
+static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary,rain: Dictionary={}) -> bool:
 	if not agent.has("workplace") or agent["job"]!=-1: return false
 	var field := {}
 	for home: Dictionary in state["homes"]:
@@ -130,11 +194,7 @@ static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary) 
 	var origin := Vector2i(roundi(agent["x"]),roundi(agent["z"]))
 	var returning := int(agent.get("carrying",0))>0
 	var target := Vector2i(field["work_x"],field["work_z"])
-	if returning:
-		for home: Dictionary in state["homes"]:
-			if int(home["id"]) in item["members"]:
-				target=Vector2i(home["work_x"],home["work_z"])
-				break
+	if returning: target=delivery_point(state,item)
 	if Vector2(agent["x"],agent["z"]).distance_to(Vector2(target))<0.01:
 		agent["path"]=[]
 		if returning:
@@ -144,8 +204,15 @@ static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary) 
 			state["progression"]["revision"]+=1
 			agent["state"]="idle"
 		else:
+			if field.has("awaiting_influence") and not world.can_act_at(field["anchor_x"],field["anchor_z"]):
+				agent["state"]="waiting"
+				return true
 			agent["state"]="farming" if field["kind"]=="farm" else "mining"
-			field["harvest_accumulator"]=float(field.get("harvest_accumulator",0))+harvest_rate(state,field)*0.1
+			var multiplier:=preload("res://simulation/campaign_rain.gd").field_multiplier(field,rain)
+			field["harvest_accumulator"]=float(field.get("harvest_accumulator",0))+harvest_rate(state,field)*0.1*multiplier
+			if field.get("direct_harvest",false):
+				field["harvest_accumulator"]=minf(float(field["max_belief"]),float(field["harvest_accumulator"]))
+				return true
 			if float(field["harvest_accumulator"])>=float(field["max_belief"]):
 				agent["carrying"]=floori(field["harvest_accumulator"])
 				field["harvest_accumulator"]-=int(agent["carrying"])
@@ -198,7 +265,9 @@ static func reconcile(state: Dictionary) -> void:
 		agent["path"]=[]
 		agent["state"]="idle"
 	for home: Dictionary in state["homes"].duplicate():
-		if home.get("kind","") in ["farm","mine"] and settlement(state,int(home.get("settlement_id",-1))).is_empty(): state["homes"].erase(home)
+		if not home.get("kind","") in ["farm","mine"] or not settlement(state,int(home.get("settlement_id",-1))).is_empty(): continue
+		if home.get("authored_field",false) or home.has("awaiting_influence"): home.erase("settlement_id")
+		else: state["homes"].erase(home)
 
 
 static func valid_world(state: Dictionary) -> bool:
@@ -210,14 +279,31 @@ static func valid_world(state: Dictionary) -> bool:
 			if not homes.has(id) or int(homes[id].get("settlement_id",-1))!=int(item["id"]): return false
 	for home: Dictionary in state["homes"]:
 		if not home.get("kind","") in ["farm","mine"]: continue
-		if settlement(state,int(home.get("settlement_id",-1))).is_empty(): return false
+		if home.get("authored_field",false):
+			if not state.has("opening") or home["kind"]!="farm" or home.get("direct_harvest")!=true: return false
+			var harvest: Variant=home.get("harvest_accumulator")
+			if not (harvest is int or harvest is float) or not is_finite(float(harvest)) or harvest<0 or harvest>home["max_belief"]: return false
+			if not home.has("settlement_id"): continue
+		if home.has("awaiting_influence"):
+			if state["progression"]["rules"].get("registered_scope")!="initialworldsetup7" or not home["awaiting_influence"] is bool: return false
+			for key: String in ["anchor_x","anchor_z"]:
+				var anchor: Variant=home.get(key)
+				if not (anchor is int or anchor is float) or not is_finite(float(anchor)) or anchor!=int(anchor) or anchor<0 or anchor>=state["width"]: return false
+			var amount: Variant=home.get("harvest_accumulator",0)
+			if not (amount is int or amount is float) or not is_finite(float(amount)) or amount<0 or amount>home["max_belief"]: return false
+			if home["awaiting_influence"] and (amount!=0 or home.has("settlement_id")): return false
+		if not home.has("awaiting_influence") or home.has("settlement_id"):
+			var item := settlement(state,int(home.get("settlement_id",-1)))
+			if item.is_empty() or item["role"]!=("farmer" if home["kind"]=="farm" else "miner"): return false
 		for key: String in ["harvest_rate","harvest_accumulator"]:
 			var value: Variant = home.get(key,0)
 			if not (value is int or value is float) or not is_finite(float(value)) or value<0: return false
 	for agent: Dictionary in state["followers"]:
 		if not agent.has("workplace"): continue
 		if not (agent["workplace"] is int or agent["workplace"] is float) or not homes.has(int(agent["workplace"])): return false
-		if not agent.get("profession","") in ["farmer","miner"] or settlement(state,int(agent.get("settlement_id",-1))).is_empty(): return false
+		var field: Dictionary=homes[int(agent["workplace"])]
+		var item := settlement(state,int(agent.get("settlement_id",-1)))
+		if item.is_empty() or not field.get("kind") in ["farm","mine"] or field.get("settlement_id")!=item["id"] or agent.get("profession")!=item["role"]: return false
 		var carried: Variant = agent.get("carrying",0)
 		if not (carried is int or carried is float) or not is_finite(float(carried)) or carried<0 or carried!=int(carried): return false
 	return true

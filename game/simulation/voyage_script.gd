@@ -42,6 +42,12 @@ static func truth(value: Variant) -> bool:
 	return value!=null and not (value is bool and not value)
 
 
+static func first_result(value: Variant) -> Variant:
+	if value is Dictionary and value.has("multiple"):
+		return value["multiple"][0] if not value["multiple"].is_empty() else null
+	return value
+
+
 func run() -> void:
 	block(program.get("body",[]),{})
 
@@ -61,6 +67,8 @@ func invoke(function: Variant, args: Array = []) -> Variant:
 	depth+=1
 	var data: Dictionary = program["functions"][str(function["function"])]
 	var scope: Dictionary = function.get("scope",{}).duplicate(true)
+	var self_name: String=program.get("local_function_names",{}).get(str(function["function"]),"")
+	if not self_name.is_empty(): scope[self_name]=function
 	for i in range(data["params"].size()): scope[str(data["params"][i])]=args[i] if i<args.size() else null
 	var returned := block(data["body"],scope)
 	depth-=1
@@ -152,10 +160,10 @@ func expression(node: Array, scope: Dictionary) -> Variant:
 			if node[1]=="#": return table_length(value)
 			return -float(value) if value is int or value is float else 0
 		"binary":
-			var left: Variant = expression(node[2],scope)
+			var left: Variant = first_result(expression(node[2],scope))
 			if node[1]=="and": return expression(node[3],scope) if truth(left) else left
 			if node[1]=="or": return left if truth(left) else expression(node[3],scope)
-			var right: Variant = expression(node[3],scope)
+			var right: Variant = first_result(expression(node[3],scope))
 			match node[1]:
 				"==": return left==right
 				"~=": return left!=right

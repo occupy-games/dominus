@@ -12,6 +12,20 @@ const Voyage = preload("res://simulation/voyage.gd")
 const Economy = preload("res://simulation/campaign_economy.gd")
 const Research = preload("res://simulation/research.gd")
 const Opening = preload("res://simulation/campaign_opening.gd")
+const LeashLesson = preload("res://simulation/leash_lesson.gd")
+const CampaignLeash = preload("res://simulation/campaign_leash.gd")
+const Farming = preload("res://simulation/campaign_farming.gd")
+const Ark = preload("res://simulation/campaign_ark.gd")
+const Weyworld = preload("res://simulation/weyworld.gd")
+const Pit = preload("res://simulation/campaign_pit.gd")
+const Rain = preload("res://simulation/campaign_rain.gd")
+const Fountain = preload("res://simulation/campaign_fountain.gd")
+const Cliff = preload("res://simulation/campaign_cliff_sculpt.gd")
+const Collector = preload("res://simulation/campaign_belief_collector.gd")
+const Beautify = preload("res://simulation/source_beautify.gd")
+const AbodeBeauty = preload("res://simulation/campaign_abode_beauty.gd")
+const LandEffectTimer = preload("res://simulation/source_land_effect_timer.gd")
+const SourceRaster = preload("res://simulation/source_influence.gd")
 const MAX_HEIGHT := 63
 const DIRECTIONS := [Vector2i.LEFT, Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN]
 var _state: Dictionary
@@ -54,6 +68,10 @@ func initialize(config: Dictionary, random: RandomNumberGenerator) -> void:
 	_house_specs.clear()
 	_rock_visibility_stamp=Vector2i(-1,-1)
 	_dry_land = 0
+	if config.has("leash_lesson"):
+		LeashLesson.setup(self,_state,config["leash_lesson"])
+		_index_trees()
+		return
 	var center := (width - 1) / 2.0
 	for z in range(width):
 		for x in range(width):
@@ -104,6 +122,22 @@ func _agent(x: float, z: float, animal: bool) -> Dictionary:
 func snapshot(include_scenery: bool = true) -> Dictionary:
 	var result := detached_state(include_scenery)
 	if _state.has("opening"):
+		result["opening"]["cliff_status"]=Cliff.status(_state)
+		result["opening"]["collector_status"]=Collector.status(_state)
+		var shrine_claims: Array=[]
+		for site: Dictionary in _state["progression"]["shrines"]:
+			if site.get("repaired",false) and not site["complete"] and _validate({"type":"campaign_activate_shrine","id":site["id"]})["ok"]:
+				shrine_claims.append(site["id"])
+		result["opening"]["shrine_claims"]=shrine_claims
+		var pit_clips: Dictionary=_state["opening"]["definition"].get("pit_sacrifice",{}).get("clips",{})
+		for follower: Dictionary in result["followers"]:
+			if not follower.has("sacrifice_due"): continue
+			var ticks:=ceili(float(pit_clips[follower["state"]])/TICK_SECONDS)
+			follower["sacrifice_elapsed"]=minf(float(pit_clips[follower["state"]]),float(ticks-int(follower["sacrifice_due"])+int(_state["tick"]))*TICK_SECONDS)
+		if _state["opening"].has("chests"):
+			var chests := preload("res://simulation/authored_chests.gd").new()
+			chests.configure(self,_state,[])
+			result["progression"]["chests"]=chests.snapshot()
 		var rocks := preload("res://simulation/authored_rocks.gd")
 		var stamp := Vector2i(_state["terrain_revision"],_state["progression"]["rock_revision"])
 		if stamp!=_rock_visibility_stamp:
@@ -112,13 +146,32 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 		result["authored_rocks"]=rocks.entries(_state)
 		result["source_rock_cells"]=_state["opening"]["definition"]["rock_cells"]
 		result["source_rock_visibility"]=_rock_visibility.duplicate()
+		var growing := Opening.supports_growth(_state["opening"]) or Opening.supports_timeline_housing(_state["opening"]) or Opening.supports_shrine_housing(_state["opening"]) or Opening.supports_discovery(_state["opening"])
+		if Opening.supports_expansion(_state["opening"]) or growing:
+			var ready: Array=[]
+			for home: Dictionary in _state["homes"]:
+				if _validate({"type":"sprog","home_id":home["id"]})["ok"]: ready.append(home["id"])
+			result["opening"]["sprog_homes"]=ready
+		if growing: result["opening"]["growth_plots"]=promised_growth_plots().duplicate(true)
+		if CampaignLeash.enabled(_state):
+			result["opening"]["leash_controls"]=_state["opening"]["definition"]["leash_rules"]
+			var leash_homes: Array=[]
+			for home: Dictionary in _state["homes"]:
+				if not Opening.release_candidate(_state,int(home["id"])).is_empty(): leash_homes.append(home["id"])
+			result["opening"]["leash_homes"]=leash_homes
 	var completed := _completed_homes()
+	if _state.has("weyworld"): result["weyworld"]=Weyworld.presentation(_state)
 	result["completed_homes"] = completed
 	result["happiness"] = mini(100, 50 + _state["sheep"].size() * 3 + completed * 5)
 	if result.has("progression"):
 		result["currency_metrics"]=preload("res://simulation/hud_metrics.gd").snapshot(_state)
+		if _state.has("opening") and Opening.supports_level_card(_state["opening"]):
+			var population := int(_state["opening"]["definition"]["growth_population_card"]["population"])
+			result["currency_metrics"]["followers"]={"amount":_state["followers"].size(),"previous":0,"next":population,"progress":1.0}
 		result["tribe_happiness"]=result["progression"].get("happiness",preload("res://simulation/happiness.gd").initial(result["progression"]["rules"])).duplicate(true)
 		result["happiness"]=roundi(float(result["tribe_happiness"]["player"])*100)
+		if _state.has("opening") and not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"Happiness"):
+			result.erase("tribe_happiness")
 		result["progression"]["sticker_counts"]={}
 		for sticker: String in result["progression"]["rules"].get("stickers",{}): result["progression"]["sticker_counts"][sticker]=Research.stock(_state["progression"],sticker)
 		for sticker: String in result["progression"]["rules"].get("sticker_aliases",{}).values():
@@ -133,6 +186,7 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 
 
 func inspect_building(id: Variant,entity: String="home") -> Dictionary:
+	if entity==Collector.KIND: return Collector.inspect_building(_state,id)
 	var result := preload("res://simulation/building_stats.gd").inspect(_state,id,entity)
 	if entity=="home" and float(result.get("next_follower_seconds",-1))>=0:
 		for home: Dictionary in _state["homes"]:
@@ -161,6 +215,154 @@ func migrate_voyage(config: Dictionary) -> void:
 	_state["voyage"]=upgraded
 	Voyage.setup(self,_state)
 	_state["voyage"]["definition"]=Immutable.freeze(_state["voyage"]["definition"])
+
+
+func resume_opening_handoff(source: Dictionary) -> bool:
+	var opening: Dictionary=_state.get("opening",{})
+	var step: int=opening.get("promised_step",-1)
+	if opening.is_empty(): return false
+	var prior: Dictionary=opening["definition"]
+	var needs_timeline: bool=not prior.has("timeline_steps") and source.has("timeline_steps")
+	var needs_housing: bool=not prior.has("mud_hut") and source.has("mud_hut") and source.has("timeline_population_card")
+	var needs_shrine: bool=not Opening.has_shrine_tutorial(opening) and source.has("first_shrine_id") and source.has("shrine_population_card")
+	var needs_belief: bool=not Opening.has_belief_tutorial(opening) and source.has("belief_steps") and source.has("belief_rules")
+	var needs_discovery: bool=not prior.has("discovery_site_id") and source.has("discovery_site_id")
+	var needs_leash: bool=not prior.has("leash_population_card") and source.has("leash_population_card")
+	var needs_dock: bool=(not prior.has("dock_site_id") or not prior.get("constants",{}).has("FIRST_VOYAGE_RETURN")) and source.has("dock_site_id")
+	var needs_farming: bool=source.has("farming_population_card") and (not prior.has("farming_population_card") or not prior.has("housing_advances") or not prior.has("authored_sticker_chests"))
+	var needs_grain: bool=source.has("grain_building_card") and not prior.has("grain_building_card")
+	var needs_grain_advances: bool=source.has("grain_advances") and not prior.has("grain_advances")
+	var needs_mining: bool=source.has("mining_core") and (not prior.has("mining_core") or source.has("stone_abodes") and not prior.has("stone_abodes"))
+	var needs_ark: bool=source.get("ark",{}).has("sail_labels") and not prior.get("ark",{}).has("sail_labels")
+	var needs_chest_stickers: bool=source.get("source_chest_stickers",false) and not prior.get("source_chest_stickers",false)
+	var needs_pit: bool=source.has("pit_sacrifice") and not prior.has("pit_sacrifice")
+	var needs_rain: bool=source.has("rain") and not prior.has("rain")
+	var needs_fountain: bool=source.has("fountain") and not prior.has("fountain")
+	var needs_mud_lodge: bool=source.has("mud_lodge") and not prior.has("mud_lodge")
+	var needs_cliff: bool=source.has("cliff_sculpt") and not prior.get("cliff_sculpt",{}).has("upgrades")
+	var needs_rock_belief: bool=source.has("rock_belief") and not prior.has("rock_belief")
+	var needs_collector: bool=source.has("belief_collector") and not prior.has("belief_collector")
+	var needs_chest: bool=step in [7,8,9] and not prior.has("first_chest") and source.has("first_chest")
+	var adds_tutorial: bool=needs_timeline or needs_housing or needs_shrine or needs_belief or needs_discovery or needs_leash or needs_dock or needs_farming or needs_grain or needs_grain_advances or needs_mining or needs_ark or needs_chest_stickers or needs_pit or needs_rain or needs_fountain or needs_mud_lodge or needs_cliff or needs_rock_belief or needs_collector
+	if not adds_tutorial and (opening.get("phase")!="promised_land" or not step in [3,6,7,8,9,10]): return false
+	if opening.get("handoff",{}).get("available",true) and not needs_chest and not adds_tutorial: return false
+	if prior["source_sha256"]!=source.get("source_sha256") or not source.has("growth_population_card"): return false
+	var functions: Dictionary=Progression.canonical_numbers(source["program"]["functions"])
+	for id: String in prior["program"]["functions"]:
+		if prior["program"]["functions"][id]!=functions.get(id): return false
+	var definition := prior.duplicate(false)
+	for key: String in ["program","helpers","day_cycle","promised_steps","growth_population_card"]: definition[key]=Progression.canonical_numbers(source[key])
+	if source.has("first_chest"): definition["first_chest"]=Progression.canonical_numbers(source["first_chest"])
+	if source.has("timeline_steps"):
+		definition["timeline_steps"]=Progression.canonical_numbers(source["timeline_steps"])
+		definition["messages"]=Progression.canonical_numbers(source["messages"])
+	if needs_shrine:
+		for key: String in ["shrine_steps","first_shrine_id","shrine_population_card","constants"]: definition[key]=Progression.canonical_numbers(source[key])
+		for key: String in ["FIRST_SHRINE","DISCOVERY"]: opening["globals"][key]=definition["constants"][key].duplicate(true)
+	if needs_belief:
+		for key: String in ["belief_steps","belief_rules","constants"]: definition[key]=Progression.canonical_numbers(source[key])
+		for key: String in ["SCULPT_GRASS_POS","nrOfStartedSculpts","nrOfCompletedSculpts","nrOfFailedSculpts","needBeliefToSculptTipCounter","currentSculptPos","currentSculptPosAlt"]:
+			var value: Variant=definition["constants"][key]
+			opening["globals"][key]=value.duplicate(true) if value is Dictionary or value is Array else value
+	if needs_discovery:
+		for key: String in ["discovery","discovery_site_id","constants"]:
+			definition[key]=Progression.canonical_numbers(source[key])
+		for key: String in ["CARD_DISCOVERY","CLIENT_VERSION","ClientVersion"]:
+			var value: Variant=definition["constants"][key]
+			opening["globals"][key]=value.duplicate(true) if value is Dictionary else value
+	if needs_leash:
+		for key: String in ["discovery","constants","leash_population_card"]:
+			definition[key]=Progression.canonical_numbers(source[key])
+		opening["globals"]["EVENT_TEMPLE"]=definition["constants"]["EVENT_TEMPLE"].duplicate(true)
+	if needs_dock:
+		for key: String in ["dock_site_id","leash_rules","discovery","constants"]: definition[key]=Progression.canonical_numbers(source[key])
+		opening["globals"]["leashCount"]=source["constants"]["leashCount"]
+	if needs_farming:
+		for key: String in ["discovery","constants","farming_population_card","farming_core","housing_advances","wooden_abodes","authored_sticker_chests"]:
+			if not source.has(key): continue
+			definition[key]=Progression.canonical_numbers(source[key])
+		for key: String in ["FARM_BELIEF_COST","JOB_FARMER","JOB_BUILDER","FIELD_TYPE"]: opening["globals"][key]=definition["constants"][key]
+		var updated: Dictionary=_state["progression"]["rules"].duplicate(true)
+		updated["economy"]["settlements"][Farming.POWER]["cost"]=definition["constants"]["FARM_BELIEF_COST"]
+		_state["progression"]["rules"]=Immutable.freeze(updated)
+	if needs_grain:
+		for key: String in ["discovery","authored_fields","grain_building_card"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_grain_advances:
+		for key: String in ["grain_advances","wooden_abodes","builder_settlement","builder_core"]:
+			if source.has(key): definition[key]=Progression.canonical_numbers(source[key])
+		if definition.has("builder_core"):
+			var updated: Dictionary=_state["progression"]["rules"].duplicate(true)
+			updated["economy"]["settlements"][Farming.BUILDER_POWER]["cost"]=definition["builder_settlement"]["cost"]
+			_state["progression"]["rules"]=Immutable.freeze(updated)
+	if needs_mining:
+		for key: String in ["mining_population_card","mining_settlement","mining_core","ore_advances","stone_abodes"]:
+			if source.has(key): definition[key]=Progression.canonical_numbers(source[key])
+		var updated: Dictionary=_state["progression"]["rules"].duplicate(true)
+		updated["economy"]["settlements"][Farming.MINING_POWER]["cost"]=definition["mining_settlement"]["cost"]
+		_state["progression"]["rules"]=Immutable.freeze(updated)
+	if needs_ark: definition["ark"]=Progression.canonical_numbers(source["ark"])
+	if needs_chest_stickers:
+		if opening.get("sticker_chests_registered",false):
+			opening["registered_sticker_chests"]=prior.get("authored_sticker_chests",[]).size()
+		for key: String in ["authored_sticker_chests","source_chest_stickers","source_research_cards","source_research_stickers","sticker_selection_rules"]:
+			definition[key]=Progression.canonical_numbers(source[key])
+	if needs_pit:
+		for key: String in ["pit_sacrifice","pit_clips","pit_beam"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_rain: definition["rain"]=Progression.canonical_numbers(source["rain"])
+	if needs_cliff: definition["cliff_sculpt"]=Progression.canonical_numbers(source["cliff_sculpt"])
+	if needs_rock_belief: definition["rock_belief"]=Progression.canonical_numbers(source["rock_belief"])
+	if needs_collector: definition["belief_collector"]=Progression.canonical_numbers(source["belief_collector"])
+	if needs_mud_lodge:
+		for key: String in ["mud_lodge","housing_advances"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_fountain:
+		definition["fountain"]=Progression.canonical_numbers(source["fountain"])
+		var messages: Dictionary=definition["messages"].duplicate(false)
+		for id: String in ["5602","5603","5604","5606"]: messages[id]=Progression.canonical_numbers(source["messages"][id])
+		definition["messages"]=messages
+	if needs_housing:
+		for key: String in ["mud_hut","timeline_population_card","constants"]: definition[key]=Progression.canonical_numbers(source[key])
+		if opening["phase"]=="timeline":
+			# Older Timeline saves replaced the completed tents' source duration
+			# with the compatibility house table when the sticker was applied.
+			var tent_ticks := roundi(float(definition["first_abode_values"]["values"]["build time"])/TICK_SECONDS)
+			for home: Dictionary in _state["homes"]:
+				if home.get("model_id")==definition["first_abode_model"] and home["progress"]>=home["build_ticks"]:
+					home["progress"]=tent_ticks
+					home["build_ticks"]=tent_ticks
+	opening["definition"]=Immutable.freeze(definition)
+	opening["globals"].merge(definition["helpers"].duplicate(true))
+	opening["globals"]["origTimeOfDaySpeed"]=definition["day_cycle"]["configuration"]["TimeOfDaySpeed"]
+	if not opening["globals"].has("abodesInState0"): opening["globals"]["abodesInState0"]=0
+	return true
+
+
+func prepare_loaded_opening() -> void:
+	if not _state.has("opening"): return
+	var opening: Dictionary=_state["opening"]
+	opening.erase("rain_cast")
+	if opening.get("fountain_card_open",false): opening["resume_fountain_card"]=true
+	_pending=_pending.filter(func(command: Dictionary) -> bool: return command.get("power")!=Rain.POWER and command["type"]!="campaign_rain_stop")
+	if Opening.supports_level_card(opening) and opening["promised_step"]==8: opening["resume_card_tutorial"]=true
+	if Opening.supports_timeline(opening): opening["resume_timeline"]=true
+	if opening["phase"]=="shrine" and opening["shrine_step"]==1: opening["resume_shrine_card"]=true
+	if opening["phase"]=="belief" and opening["belief_step"] in [1,2]: opening["resume_belief"]=true
+	if Opening.supports_discovery(opening) and opening.get("pit_card_open",false): opening["resume_pit_card"]=true
+	if Opening.supports_discovery(opening) and opening.get("leash_step")==1: opening["resume_leash_card"]=true
+	if Opening.supports_discovery(opening) and opening.get("dock_card_open",false): opening["resume_dock_card"]=true
+	if Opening.supports_discovery(opening) and opening.get("events_step")==0: opening["resume_dock_selection"]=true
+	if Opening.supports_discovery(opening) and opening.get("farming_step") in [1,2,3]: opening["resume_farming"]=true
+	if opening.get("farming_step",-1)>=4:
+		opening.erase("farming_placing")
+		opening.erase("farming_preview")
+	if opening.get("superfast_step") in [1,3]: opening["resume_superfast"]=true
+	opening.erase("builder_preview")
+	opening.erase("mining_preview")
+
+
+func initialize_authored_chests() -> void:
+	var chests := preload("res://simulation/authored_chests.gd").new()
+	chests.configure(self,_state,[])
+	chests.initialize(_random)
 
 
 func detached_state(include_scenery: bool = true) -> Dictionary:
@@ -369,9 +571,8 @@ func _source_plot_field_at(x: int,z: int,biomes: int) -> Dictionary:
 	var flat := x>=0 and z>=0 and x<1023 and z<1023 and height>0 and height_at(x+1,z)==height and height_at(x,z+1)==height and height_at(x+1,z+1)==height
 	return {"flat":flat,"scenery":plot_obstruction(x,z)!="","blocked":_occupied(x,z),
 		"map_byte":preload("res://simulation/source_plot_field.gd").at(_state["opening"]["definition"]["plot_field"],x,z),
-		# The verified all-zero Homeworld6 field cannot satisfy the native
-		# blight/height-byte gate at its positive dry plot heights.
-		"blight":0.0,"biome_allowed":(biomes&(1<<source_biome_at(x,z)))!=0,"eligible":_source_fresh_plot_cell(x,z,biomes)}
+		"blight":preload("res://simulation/source_map_fields.gd").read(_state["source_influence"]["raster"],5,x,z),
+		"biome_allowed":(biomes&(1<<source_biome_at(x,z)))!=0,"eligible":_source_fresh_plot_cell(x,z,biomes)}
 
 
 func _advance_source_plots() -> void:
@@ -417,6 +618,14 @@ func refresh_spatial() -> void:
 	for home: Dictionary in _state["homes"]:
 		for dz in range(int(home.get("span",2))):
 			for dx in range(int(home.get("span",2))): _blocked_cells[Vector2i(home["x"]+dx,home["z"]+dz)]=home["id"]
+	if _state.has("opening"):
+		for prop: Dictionary in _state["props"]:
+			var kind: String=prop.get("kind","")
+			if not kind in ["fountain",Collector.KIND]: continue
+			var rules: Dictionary=_state["opening"]["definition"][kind]
+			var area:=Rect2i(prop["x"],prop["z"],rules["width"],rules["depth"])
+			for z in range(area.position.y,area.end.y):
+				for x in range(area.position.x,area.end.x): _blocked_cells[Vector2i(x,z)]=prop["id"]
 
 
 func _completed_homes() -> int:
@@ -427,7 +636,7 @@ func _completed_homes() -> int:
 	return count
 
 
-func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1) -> Array:
+func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect2i=Rect2i()) -> Array:
 	if start==target or height_at(target.x,target.y)<=0: return []
 	# This is a derived cache. A fresh search follows exactly the same neighbor
 	# order and finds the same routes after restoring a save without the cache.
@@ -437,11 +646,13 @@ func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1) -> Array:
 		_route_cache.clear()
 		_component_of.clear()
 	refresh_spatial()
-	if _blocked_cells.has(target) and _blocked_cells[target]!=ignore_home: return []
-	if not _component_of.has(ignore_home): _component_of[ignore_home]={}
-	var components: Dictionary = _component_of[ignore_home]
+	var masking := avoid.has_area()
+	if masking and avoid.has_point(target) or _blocked_cells.has(target) and _blocked_cells[target]!=ignore_home: return []
+	var policy: Variant=[ignore_home,avoid] if masking else ignore_home
+	if not _component_of.has(policy): _component_of[policy]={}
+	var components: Dictionary = _component_of[policy]
 	if components.has(start) and components.get(target,-1)!=components[start]: return []
-	var key := Vector3i(start.x,start.y,ignore_home)
+	var key: Variant=[start,policy] if masking else Vector3i(start.x,start.y,ignore_home)
 	if not _route_cache.has(key):
 		if _route_cache.size()>=12: _route_cache.erase(_route_cache.keys()[0])
 		_route_cache[key]={"frontier":[start],"previous":{start:start},"cursor":0}
@@ -453,7 +664,7 @@ func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1) -> Array:
 		search["cursor"]+=1
 		for direction: Vector2i in DIRECTIONS:
 			var next := current+direction
-			if previous.has(next) or height_at(next.x,next.y)<=0 or (_blocked_cells.has(next) and _blocked_cells[next]!=ignore_home): continue
+			if previous.has(next) or masking and avoid.has_point(next) or height_at(next.x,next.y)<=0 or (_blocked_cells.has(next) and _blocked_cells[next]!=ignore_home): continue
 			if absi(height_at(current.x,current.y)-height_at(next.x,next.y))>1: continue
 			previous[next]=current
 			frontier.append(next)
@@ -478,24 +689,33 @@ func can_act_at(x: float,z: float) -> bool:
 	return Influence.contains(_state,x,z)
 
 
-func find_edge(x: float, z: float, layer: int) -> Dictionary:
+func find_edge(x: float, z: float, layer: int, cliff: bool=false) -> Dictionary:
 	var best: Dictionary = {"ok": false, "reason": "Grab near the edge of a terrain layer, then drag."}
 	if not can_act_at(x,z): return best
+	var cap:=Cliff.layers(_state) if cliff else 0
+	if cliff and cap==0: return best
 	var nearest := 6.25
 	for dz in range(-3, 4):
 		for dx in range(-3, 4):
 			var cell := Vector2i(roundi(x) + dx, roundi(z) + dz)
 			if not can_act_at(cell.x,cell.y): continue
-			for candidate_layer in range(1, MAX_HEIGHT + 1) if layer == 0 else [layer]:
-				if candidate_layer < 1 or candidate_layer > MAX_HEIGHT or height_at(cell.x, cell.y) < candidate_layer:
-					continue
-				for normal: Vector2i in DIRECTIONS:
-					if height_at(cell.x + normal.x, cell.y + normal.y) >= candidate_layer:
-						continue
-					var score := Vector2(x, z).distance_squared_to(Vector2(cell) + Vector2(normal) * 0.5)
-					if score < nearest:
-						nearest = score
-						best = {"ok": true, "x": cell.x, "z": cell.y, "nx": normal.x, "nz": normal.y, "layer": candidate_layer}
+			var high:=mini(MAX_HEIGHT,height_at(cell.x,cell.y))
+			var chosen_layer:=0
+			var chosen_normal:=Vector2i.ZERO
+			var cell_distance:=nearest
+			for normal: Vector2i in DIRECTIONS:
+				var low:=height_at(cell.x+normal.x,cell.y+normal.y)
+				var candidate_layer:=mini(high,low+cap) if cliff else (low+1 if layer==0 else layer)
+				if candidate_layer<=low or candidate_layer>high: continue
+				var score:=Vector2(x,z).distance_squared_to(Vector2(cell)+Vector2(normal)*0.5)
+				# Preserve the tie order of ascending layers within each cell.
+				if score<cell_distance or score==cell_distance and chosen_layer>candidate_layer:
+					cell_distance=score
+					chosen_layer=candidate_layer
+					chosen_normal=normal
+			if chosen_layer>0:
+				nearest=cell_distance
+				best={"ok":true,"x":cell.x,"z":cell.y,"nx":chosen_normal.x,"nz":chosen_normal.y,"layer":chosen_layer}
 	return best.duplicate(true)
 
 
@@ -507,7 +727,13 @@ func _validate_drag(command: Dictionary) -> Dictionary:
 	var layer := int(command.get("layer", 0))
 	var distance := clampi(int(command.get("distance", 0)), -12, 12)
 	var radius := clampi(int(command.get("radius", 1)), 0, 2)
-	if absi(nx) + absi(nz) != 1 or layer < 1 or layer > MAX_HEIGHT or height_at(x, z) < layer or height_at(x + nx, z + nz) >= layer:
+	var high:=height_at(x,z)
+	var low:=height_at(x+nx,z+nz)
+	var cliff: bool=command.get("power")==Cliff.POWER
+	var cap:=Cliff.layers(_state) if cliff else 0
+	if command.has("power") and cap==0:
+		return {"ok":false,"reason":"Cliff Sculpting is locked.","cost":0}
+	if absi(nx) + absi(nz) != 1 or layer < 1 or layer > MAX_HEIGHT or high < layer or low >= layer or cliff and layer!=mini(high,low+cap):
 		return {"ok": false, "reason": "Grab an exposed edge of this layer.", "cost": 0}
 	if distance == 0:
 		return {"ok": false, "reason": "Drag outward to extend this layer; inward to retract it.", "cost": 0}
@@ -533,18 +759,22 @@ func _validate_drag(command: Dictionary) -> Dictionary:
 				return {"ok": false, "reason": "Keep the drag inside the world boundary.", "cost": 0}
 			var old := height_at(px, pz)
 			var height := maxi(old, layer) if distance > 0 else mini(old, layer - 1)
+			if cliff: height=Cliff.target(old,high,low,cap,distance>0)
 			if height == old:
 				continue
 			if _occupied(px, pz):
 				return {"ok": false, "reason": "A home occupies this land. Drag around its plot.", "cost": 0}
 			changes[pz * int(_state["width"]) + px] = height
 	var edits: Array = []
-	var cost := 0
+	var units := 0.0
+	var cliff_rules: Dictionary=_state["opening"]["definition"]["cliff_sculpt"] if cliff else {}
 	for cell: int in changes:
 		if not can_act_at(cell%int(_state["width"]),cell/int(_state["width"])): return {"ok":false,"cost":0,"reason":""}
+		if _state.has("opening") and (Opening.supports_first_plot(_state["opening"]) or Opening.supports_expansion(_state["opening"])) and not Opening.inside_plot_sculpt_lock(_state["opening"],cell%int(_state["width"]),cell/int(_state["width"])): return {"ok":false,"cost":0,"reason":""}
 		edits.append({"cell": cell, "height": changes[cell]})
-		cost += absi(int(changes[cell]) - int(_state["terrain"][cell]))
-	cost=ceili(cost*runtime_value("sculpt_cost",1.0))
+		var change:=absi(int(changes[cell])-int(_state["terrain"][cell]))
+		units+=Cliff.belief_units(change,cliff_rules) if cliff else float(change)
+	var cost:=ceili(units*runtime_value("sculpt_cost",1.0))
 	if _state.has("opening"): cost=Opening.sculpt_cost(_state,edits,cost)
 	if edits.is_empty():
 		return {"ok": false, "reason": "This drag does not change the selected layer.", "cost": 0}
@@ -561,18 +791,243 @@ func _validate_drag(command: Dictionary) -> Dictionary:
 	return {"ok": _state["belief"] >= cost, "reason": ("Extend" if distance > 0 else "Retract") + " layer %d · %d belief" % [layer, cost] if _state["belief"] >= cost else "This drag needs %d belief. Shorten it or collect more." % cost, "cost": cost, "edits": edits}
 
 
+func _inspect_collection(command: Dictionary) -> Dictionary:
+	var amount := 0
+	var collectible: Array=[]
+	for home: Dictionary in _state["homes"]:
+		if command.has("home_id") and home["id"] != int(command["home_id"]): continue
+		if home.get("kind","") in ["farm","mine"]:
+			if not command.has("home_id") or not (home.has("awaiting_influence") or home.get("direct_harvest",false)) or not can_act_at(home["anchor_x"],home["anchor_z"]): continue
+			if home["progress"]<home["build_ticks"]: continue
+			var harvest := int(home["harvest_accumulator"])
+			var resource := "wheat" if home["kind"]=="farm" else "ore"
+			return {"ok":harvest>0 and harvest>=int(home["max_belief"]),"cost":0,"reason":"","amount":harvest,"resource":resource,"homes":[home["id"]]}
+		if not can_act_at(home["x"],home["z"]): continue
+		if int(home["stored"])<int(home.get("min_belief",0)): continue
+		amount += int(home["stored"])
+		collectible.append(home["id"])
+	return {"ok": amount > 0, "reason": "Collect %d belief" % amount if amount > 0 else "Homes are still gathering belief.", "cost": 0, "amount": amount,"homes":collectible}
+
+
+func _sculpt_context(command: Dictionary,edits: Array) -> Dictionary:
+	var x := float(command.get("x",0))
+	var z := float(command.get("z",0))
+	var old := source_raw_height_at(x,z)
+	var first := old
+	var last := int(command.get("layer",maxi(1,old-19)))+19
+	for edit: Dictionary in edits:
+		var cell: int=edit["cell"]
+		var previous := source_raw_height_at(cell%int(_state["width"]),cell/int(_state["width"]))
+		first=mini(first,mini(previous,int(edit["height"])+19))
+		last=maxi(last,maxi(previous,int(edit["height"])+19))
+	return {"layers":[first,last],"position":[x,z,preload("res://simulation/source_terrain.gd").surface_height(old)]}
+
+
+func inspect_source_settlement(opening: Dictionary,command: Dictionary,power: String) -> Dictionary:
+	var reject:={"ok":false,"cost":0,"reason":""}
+	var role := "mining" if power==Farming.MINING_POWER else "builder"
+	if not opening["definition"].has(role+"_core") or not power in _state["progression"]["powers"]: return reject
+	var draft: Dictionary=opening.get(role+"_preview",{})
+	match str(command["type"]).get_slice("_",2):
+		"preview":
+			var plan:=Farming.inspect_placement(self,_state,command,power)
+			plan["cost"]=0
+			return plan
+		"cancel":
+			return {"ok":true,"cost":0,"reason":""}
+		"confirm":
+			if draft.is_empty(): return reject
+			var plan:=Farming.inspect_placement(self,_state,draft,power)
+			if plan.get("members",[])!=draft["members"]: return reject
+			return plan
+	return reject
+
+
 func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String = "") -> Dictionary:
 	var kind: String = str(command.get("type", ""))
+	if _state.has("leash_lesson"): return LeashLesson.inspect(self,_state,command)
+	if kind=="weyworld_release_ark": return inspect_ark_release(command.get("id"))
+	if _state.has("weyworld"):
+		if kind=="leash": return inspect_weyworld_leash(command)
+		if kind=="campaign_ack": return {"ok":command.get("id") in _state["weyworld"]["hints"] and int(command.get("id"))>=5803,"cost":0,"reason":""}
 	if _state.has("opening"):
 		if kind=="campaign_view": return {"ok":Opening.valid_observation(command),"cost":0,"reason":""}
+		if kind=="collect" and command.get("gesture")=="drag" and not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"BeliefLeashing"):
+			return {"ok":false,"cost":0,"reason":""}
 		if kind=="campaign_ack":
 			var found := false
 			for message: Dictionary in _state["opening"]["messages"]:
-				if int(message["id"])==int(command.get("id",-1)): found=true
+				if int(message["id"])!=int(command.get("id",-1)): continue
+				var group: String=_state["opening"]["definition"]["messages"].get(str(int(message["id"])),{}).get("group","")
+				found=int(message.get("visible_tick",0))<=int(_state["tick"]) and not group in _state["opening"].get("hidden_tables",[])
+				found=found and (int(message["id"])!=1005 or not Opening.first_plot_in_range(_state,message.get("anchor",{}).get("handle")).is_empty())
 			return {"ok":found,"cost":0,"reason":""}
+		var timeline_housing := Opening.supports_timeline_housing(_state["opening"])
+		var shrine_housing := Opening.supports_shrine_housing(_state["opening"])
+		var discovery := Opening.supports_discovery(_state["opening"])
+		if discovery:
+			var opening: Dictionary=_state["opening"]
+			var leash_card: bool=opening.get("leash_step")==1 and not opening.get("leash_mission_pending",false)
+			if opening.get("leash_mission_pending",false): return {"ok":kind=="campaign_leash_lesson_completed","cost":0,"reason":""}
+			if kind=="campaign_rain_stop": return {"ok":true,"cost":0,"reason":""}
+			if kind=="campaign_cliff_upgrade": return Cliff.inspect_upgrade(_state,command.get("id"))
+			if kind=="campaign_belief_collector_upgrade": return Collector.inspect_upgrade(_state,command.get("id"))
+			if kind=="use_power" and command.get("power")==Rain.POWER:
+				return Rain.inspect(self,_state,command,TICK_SECONDS)
+			if kind=="use_power" and command.get("power")==Collector.POWER:
+				return Collector.inspect_place(self,_state,command)
+			if kind=="campaign_fountain_tap" or kind=="use_power" and command.get("power")==Fountain.POWER:
+				return Fountain.inspect(self,_state,command)
+			var farm_step: int=opening.get("farming_step",-1)
+			var farm_placement: bool=farm_step==3 or opening.get("farming_placing",false)
+			if kind=="campaign_farm_card" or kind=="claim_card" and command.get("card")=="Card_Settlement_Farming":
+				return {"ok":farm_step==0 and not leash_card and not opening.get("pit_card_open",false) and not opening.get("dock_card_open",false),"cost":0,"reason":""}
+			if kind=="campaign_farm_select": return {"ok":farm_step==2 or farm_step>=4 and not farm_placement,"cost":0,"reason":""}
+			if kind in ["campaign_farm_begin","campaign_farm_cancel"]:
+				return {"ok":farm_placement,"cost":0,"reason":""}
+			if kind=="campaign_farm_preview" and farm_placement:
+				var preview:=Farming.inspect_placement(self,_state,command)
+				preview["cost"]=0
+				return preview
+			if kind=="campaign_farm_confirm" and farm_placement and opening.has("farming_preview"):
+				var draft: Dictionary=opening["farming_preview"]
+				var plan:=Farming.inspect_placement(self,_state,draft)
+				if plan.get("members",[])!=draft["members"]: plan["ok"]=false
+				return plan
+			if kind in ["campaign_builder_preview","campaign_builder_confirm","campaign_builder_cancel"]:
+				return inspect_source_settlement(opening,command,Farming.BUILDER_POWER)
+			if kind in ["campaign_mining_preview","campaign_mining_confirm","campaign_mining_cancel"]:
+				return inspect_source_settlement(opening,command,Farming.MINING_POWER)
+			if kind=="deploy_worker":
+				var settlement:=Economy.settlement(_state,int(command.get("id",-1)))
+				if settlement.get("role")=="builder":
+					var release:={"type":"sprog","home_id":settlement["members"][0]}
+					var worker:=_validate(release)
+					worker["plot_command"]=release
+					return worker
+				if settlement.get("role")=="miner" or farm_step>=4: return Farming.plan_field(self,_state,int(command.get("id",-1)))
+			if kind=="collect_settlement":
+				if command.get("gesture")=="drag" and not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"BeliefLeashing"):
+					return {"ok":false,"cost":0,"reason":""}
+				return Economy.inspect(self,_state,command)
+			if kind in ["claim_card","research_card"]:
+				var rock_belief: Dictionary=opening["definition"].get("rock_belief",{})
+				if not rock_belief.is_empty() and command.get("card")==rock_belief["card"] or opening["definition"].has("belief_collector") and command.get("card")==Collector.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has("cliff_sculpt") and command.get("card")==Cliff.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has("fountain") and command.get("card")==Fountain.CARD:
+					return Research.inspect(_state["progression"],command)
+				var rain: Dictionary=opening["definition"].get("rain",{})
+				if not rain.is_empty() and command.get("card")==rain["card"]:
+					return Research.inspect(_state["progression"],command)
+				var grain: Dictionary=opening["definition"].get("grain_building_card",{})
+				if not grain.is_empty() and command.get("card")==grain["id"]:
+					return Research.inspect(_state["progression"],command) if kind=="claim_card" and opening.get("superfast_step")==0 and grain["id"] in _state["progression"]["discovered"] and not grain["id"] in _state["progression"]["completed"] else {"ok":false,"cost":0,"reason":""}
+				if command.get("card")==opening["definition"].get("mining_population_card",{}).get("id"):
+					return Research.inspect(_state["progression"],command)
+				for key: String in ["housing_advances","grain_advances","ore_advances"]:
+					for level: Dictionary in opening["definition"].get(key,[]):
+						if command.get("card")==level["id"]: return Research.inspect(_state["progression"],command)
+			if kind=="open_chest" and opening.has("chests"):
+				var chests:=preload("res://simulation/authored_chests.gd").new()
+				chests.configure(self,_state,[])
+				return chests.inspect(command)
+			if kind in ["campaign_select_dock","campaign_dock_go"]:
+				var dock:=source_dock_site()
+				var step: int=opening.get("events_step",-1)
+				return {"ok":(step==0 or kind=="campaign_dock_go" and step==1) and not dock.is_empty() and command.get("id")==dock["id"] and dock["complete"],"cost":0,"reason":""}
+			if kind=="campaign_first_voyage_returned":
+				return {"ok":opening.get("events_step")==0 and command.get("won") is bool,"cost":0,"reason":""}
+			if kind=="leash": return CampaignLeash.inspect(self,_state,command)
+			if kind=="campaign_show_level_card": return {"ok":opening.get("leash_step")==0 and not opening.get("pit_card_open",false),"cost":0,"reason":""}
+			if kind=="campaign_dismiss_level_card": return {"ok":opening.get("pit_card_open",false) or leash_card or opening.get("dock_card_open",false) or opening.get("fountain_card_open",false) or farm_step==1 or opening.get("superfast_step")==1,"cost":0,"reason":""}
+			if kind=="campaign_activate_shrine":
+				var site_id: Variant=command.get("id")
+				var definition: Dictionary=opening["definition"]
+				var site:=source_shrine_site(str(site_id))
+				var eligible: bool=site_id==definition.get("discovery_site_id") or opening.get("leash_step")==4 and site_id==definition.get("dock_site_id","") or source_land_expansion(site)
+				return {"ok":eligible and not leash_card and not opening.get("dock_card_open",false) and site.get("repaired",false) and not site["complete"],"cost":0,"reason":""}
+			if kind=="repair_shrine":
+				var site:=source_shrine_site(str(command.get("id","")))
+				if source_ark_site(site): return inspect_ark_builder(site)
+			if kind=="campaign_ark_sail":
+				var site:=source_shrine_site(str(command.get("id","")))
+				return {"ok":source_ark_site(site) and not ark_manifest().is_empty(),"cost":0,"reason":""}
+			if kind=="collect" and command.has("home_id"): return _inspect_collection(command)
+		if _state["opening"]["phase"]=="belief":
+			var belief_step: int=_state["opening"]["belief_step"]
+			if kind in ["campaign_show_level_card","campaign_dismiss_level_card"]:
+				return {"ok":belief_step==(0 if kind=="campaign_show_level_card" else 1),"cost":0,"reason":""}
+			if belief_step>=4: return {"ok":false,"cost":0,"reason":""}
+			if kind=="collect" and command.has("home_id"): return _inspect_collection(command)
+			if kind=="sculpt_drag": return _validate_drag(command)
+			return {"ok":false,"cost":0,"reason":""}
+		if _state["opening"]["phase"]=="shrine":
+			var shrine_step: int=_state["opening"]["shrine_step"]
+			if kind in ["campaign_show_level_card","campaign_dismiss_level_card"]:
+				return {"ok":shrine_step==(0 if kind=="campaign_show_level_card" else 1),"cost":0,"reason":""}
+			if kind=="campaign_activate_shrine":
+				var site := source_shrine_site()
+				return {"ok":shrine_step==3 and command.get("id")==site.get("id") and site.get("repaired",false) and not site["complete"],"cost":0,"reason":""}
+			if not shrine_housing: return {"ok":false,"cost":0,"reason":""}
+		if _state["opening"]["phase"]=="timeline" and not timeline_housing:
+			var opening: Dictionary=_state["opening"]
+			var ready: bool=Opening.supports_timeline(opening)
+			if kind=="campaign_timeline_open": return {"ok":ready and opening["timeline_step"]==0 and not opening.get("timeline_open",false),"cost":0,"reason":""}
+			if kind=="campaign_timeline_close": return {"ok":ready and opening.get("timeline_open",false) and opening.get("timeline_input_lock",3)==0,"cost":0,"reason":""}
+			if kind=="research_card" and ready and opening.get("timeline_open",false) and opening.get("timeline_input_lock",3)==1 and command.get("card")==opening["level_card"]: return Research.inspect(_state["progression"],command)
+			return {"ok":false,"cost":0,"reason":""}
 		if kind=="tap_object":
 			return {"ok":Opening.can_tap_rock(_state,int(command.get("cell",-1))),"cost":0,"reason":""}
-		if _state["opening"].get("handoff",{}).get("available",true)==false: return {"ok":false,"cost":0,"reason":""}
+		if kind in ["campaign_show_level_card","campaign_dismiss_level_card"] and Opening.supports_level_card(_state["opening"]):
+			return {"ok":_state["opening"]["promised_step"]==(7 if kind=="campaign_show_level_card" else 8),"cost":0,"reason":""}
+		var growing := Opening.supports_growth(_state["opening"]) or timeline_housing or shrine_housing or discovery
+		if kind=="sprog" and (Opening.supports_expansion(_state["opening"]) or growing):
+			for home: Dictionary in _state["homes"]:
+				if home["id"]==command.get("home_id") and home.get("settlement_core",false) and Economy.settlement(_state,home["settlement_id"]).get("role")!="builder":
+					return {"ok":false,"cost":0,"reason":""}
+			var ready: bool=timeline_housing or shrine_housing or discovery or _state["opening"]["promised_step"] in [4,6] and _state["opening"]["globals"].get("sprog_unlocked",false)
+			var candidate := Opening.release_candidate(_state,int(command.get("home_id",-1))) if ready else {}
+			ready=not candidate.is_empty()
+			if ready and (shrine_housing or discovery):
+				var shrine_plan := source_shrine_plan(candidate)
+				if not shrine_plan.is_empty(): return {"ok":true,"cost":0,"reason":"","shrine_plan":shrine_plan}
+			if ready and growing:
+				var seeking := 0
+				for follower: Dictionary in _state["followers"]:
+					if follower.get("seeking_plot",false): seeking+=1
+				var origin := Vector2i(roundi(candidate["follower"]["x"]),roundi(candidate["follower"]["z"]))
+				ready=false
+				if has_room_for_growth(seeking):
+					var reachable := 0
+					for plot: Dictionary in promised_growth_plots():
+						if source_abode_wheat_cost(plot)>int(_state.get("wheat",0)): continue
+						if not promised_plot_reachable(plot,origin): continue
+						reachable+=1
+						if reachable>seeking:
+							ready=true
+							break
+			return {"ok":ready,"cost":0,"reason":""}
+		if Opening.supports_first_chest(_state["opening"]):
+			if kind=="open_chest":
+				var chests := preload("res://simulation/authored_chests.gd").new()
+				chests.configure(self,_state,[])
+				return chests.inspect(command)
+			return {"ok":false,"cost":0,"reason":""}
+		if growing:
+			if kind=="sculpt_drag": return _validate_drag(command)
+			if kind=="tap_tree":
+				var cell := int(command.get("cell",-1))
+				var width := int(_state["width"])
+				return {"ok":cell>=0 and cell<width*width and can_act_at(cell%width,cell/width) and tree_at(cell%width,cell/width),"cost":0,"reason":""}
+			return {"ok":false,"cost":0,"reason":""}
+		if Opening.supports_level_card(_state["opening"]): return {"ok":false,"cost":0,"reason":""}
+		if Opening.supports_first_plot(_state["opening"]) or Opening.supports_expansion(_state["opening"]):
+			if kind=="sculpt_drag": return _validate_drag(command)
+			return {"ok":false,"cost":0,"reason":""}
+		if _state["opening"].get("handoff",{}).get("available",true)==false:
+			return {"ok":false,"cost":0,"reason":""}
 		if _state["opening"]["phase"]=="trailing": return {"ok":false,"cost":0,"reason":""}
 		if not kind in ["sculpt_drag","raise","lower","dig"]: return {"ok":false,"cost":0,"reason":""}
 	if _state.has("voyage"):
@@ -590,13 +1045,18 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 			return {"ok":false,"cost":0,"reason":"Belief dragging is not unlocked."}
 		if kind=="collect_settlement" or kind=="use_power" and command.get("power","") in Economy.POWERS: return Economy.inspect(self,_state,command)
 		if kind=="deploy_worker": return plan_worker(int(command.get("id",-1)))
-		if kind in ["claim_card","research_card","open_chest","tap_object","use_power"]: return Progression.inspect(_state,command)
+		if kind in ["claim_card","research_card","open_chest","tap_object","use_power"]:
+			var result := Progression.inspect(_state,command)
+			if result["ok"] and command.get("power")=="GodPower_Beautify":
+				return _inspect_beautify(command,result)
+			return result
 		if kind=="repair_shrine":
 			for shrine: Dictionary in _state["progression"]["shrines"]:
 				if shrine["id"]==command.get("id") and not shrine["started"]:
 					if shrine.get("complete",false) or str(shrine.get("model_id","")).is_empty() or int(shrine.get("build_ticks",0))<=0: return {"ok":false,"cost":0,"reason":""}
 					var reward: String = shrine["card"]
-					if reward!="Card_Expansion" and not reward.trim_prefix("Card_") in Progression.SUPPORTED_POWERS and not Progression.implemented_card(_state["progression"],reward): return {"ok":false,"cost":0,"reason":""}
+					var expansion: bool = shrine.get("expands_influence",false) or reward=="Card_Expansion"
+					if not expansion and not reward.trim_prefix("Card_") in Progression.SUPPORTED_POWERS and not Progression.implemented_card(_state["progression"],reward): return {"ok":false,"cost":0,"reason":""}
 					var payment := preload("res://simulation/temple_rules.gd").costs(_state,shrine)
 					if not payment["ok"]: return {"ok":false,"cost":0,"reason":"","missing":payment["missing"]}
 					return _inspect_shrine_repair(shrine,payment["costs"])
@@ -627,16 +1087,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 	if kind == "sculpt_drag":
 		return _validate_drag(command)
 	if kind == "collect":
-		var amount := 0
-		var collectible: Array=[]
-		for home: Dictionary in _state["homes"]:
-			if home.get("kind","") in ["farm","mine"]: continue
-			if command.has("home_id") and home["id"] != int(command["home_id"]): continue
-			if not can_act_at(home["x"],home["z"]): continue
-			if int(home["stored"])<int(home.get("min_belief",0)): continue
-			amount += int(home["stored"])
-			collectible.append(home["id"])
-		return {"ok": amount > 0, "reason": "Collect %d belief" % amount if amount > 0 else "Homes are still gathering belief.", "cost": 0, "amount": amount,"homes":collectible}
+		return _inspect_collection(command)
 	var x := int(command.get("x", -1))
 	var z := int(command.get("z", -1))
 	var width: int = _state["width"]
@@ -674,8 +1125,14 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 		if ignore_home==-1 and not _state.has("campaign") and _state["homes"].size() >= 24:
 			return {"ok": false, "reason": "This island supports up to 24 homes.", "cost": home_cost}
 		var height := height_at(x, z)
-		var specification := Economy.plot_spec(_state,command) if kind=="work_plot" else cached_house_spec(int(command.get("rank",-1)))
+		var rank: int=int(command.get("rank",_state.get("progression",{}).get("max_rank",1)))
+		var authored:=Weyworld.house_spec(_state,rank,x,z) if kind=="home" and ignore_shrine.is_empty() else {}
+		var specification := Economy.plot_spec(_state,command) if kind=="work_plot" else (cached_house_spec(rank) if authored.is_empty() else authored)
 		if specification.is_empty(): return {"ok":false,"cost":0,"reason":""}
+		if authored.is_empty():
+			var half:=float(specification["span"])*0.5
+			var land_reason:=Weyworld.placement_reason(_state,specification.get("kind","home"),x+half,z+half)
+			if not land_reason.is_empty(): return {"ok":false,"cost":0,"reason":land_reason}
 		if kind=="work_plot" or not ignore_shrine.is_empty(): home_cost=0
 		var resource_cost := {}
 		if _state.has("progression") and ignore_shrine.is_empty():
@@ -702,7 +1159,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 		var work_cells := [Vector2i(x - 1, z), Vector2i(x, z - 1), Vector2i(x + span, z), Vector2i(x, z + span)]
 		for follower: Dictionary in _state["followers"]:
 			if kind=="work_plot" and not Economy.worker_available(_state,follower,Economy.settlement(_state,int(command.get("settlement_id",-1)))): continue
-			if follower.has("workplace"): continue
+			if follower.has("workplace") or follower.has("ark_passenger") or follower.has("weyworld_destination"): continue
 			if follower["job"] != -1:
 				continue
 			var start := Vector2i(roundi(follower["x"]), roundi(follower["z"]))
@@ -741,12 +1198,22 @@ func step(commands: Array = []) -> Array:
 		queue_command(command)
 	for command: Dictionary in _pending:
 		var result := _validate(command)
+		var sculpt_context := {}
+		if _state.has("opening") and _state["opening"]["phase"]=="belief" and command.get("type")=="sculpt_drag":
+			sculpt_context=_sculpt_context(command,result.get("edits",[]))
+			var intro := Opening.new()
+			intro.configure(self,_state,events)
+			intro.sculpt_started(sculpt_context)
 		if not result["ok"]:
 			events.append({"type": "rejected", "message": result["reason"]})
+			if command.get("type")=="leash" and _state.has("opening") and result.get("shortage",false):
+				var intro := Opening.new()
+				intro.configure(self,_state,events)
+				intro.leash_release(command,result,false)
 			if _state.has("opening") and command.get("type","") in ["sculpt_drag","raise","lower","dig"]:
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
-				intro.sculpt_failed()
+				intro.sculpt_failed(sculpt_context)
 			continue
 		_state["belief"] -= result["cost"]
 		for resource: String in result.get("resource_cost",{}): _state[resource]=int(_state.get(resource,0))-int(result["resource_cost"][resource])
@@ -754,7 +1221,51 @@ func step(commands: Array = []) -> Array:
 		if result.has("plot_command"):
 			command=result["plot_command"]
 			kind=command["type"]
-		if kind in ["start_voyage","voyage_power","voyage_temple","voyage_chest"]:
+		if _state.has("leash_lesson"):
+			LeashLesson.apply(self,_state,command,result,events)
+		elif _state.has("opening") and kind=="use_power" and command.get("power")==Rain.POWER:
+			_state["opening"]["rain_cast"]={"x":command["x"],"z":command["z"]}
+		elif kind=="campaign_rain_stop":
+			_state["opening"].erase("rain_cast")
+		elif kind in ["campaign_cliff_upgrade","campaign_belief_collector_upgrade"]:
+			var p: Dictionary=_state["progression"]
+			if not p.has("script_unlocks"): p["script_unlocks"]={}
+			p["script_unlocks"][result["upgrade"]]=true
+			p["revision"]+=1
+		elif _state.has("opening") and kind=="use_power" and command.get("power")==Collector.POWER:
+			Collector.place(_state,result,TICK_SECONDS)
+			_spatial_revision+=1
+			preload("res://simulation/source_plot_schedule.gd").mark(_state["source_plots"]["schedule"],result["x"],result["z"])
+		elif _state.has("opening") and kind=="use_power" and command.get("power")==Fountain.POWER:
+			var fountain:=Fountain.place(_state,result)
+			_spatial_revision+=1
+			var schedule:=preload("res://simulation/source_plot_schedule.gd")
+			schedule.mark(_state["source_plots"]["schedule"],fountain["x"],fountain["z"])
+			var intro:=Opening.new()
+			intro.configure(self,_state,events)
+			intro.fountain_placed(fountain)
+		elif kind=="campaign_fountain_tap":
+			Fountain.celebrate(_state,command["id"],TICK_SECONDS)
+			var intro:=Opening.new()
+			intro.configure(self,_state,events)
+			intro.fountain_celebrated(command["id"])
+			events.append({"type":"source_sound","event":"Fountain celebration"})
+		elif kind=="campaign_ack" and _state.has("weyworld"):
+			Weyworld.acknowledge(self,_state,int(command["id"]))
+		elif kind=="leash" and _state.has("weyworld"):
+			if result.has("home"):
+				release_ark_passenger(result["home"],result["follower"],result["target"])
+			for assignment: Dictionary in result["orders"]:
+				assignment["agent"].merge({"weyworld_destination":result["destination"],"path":assignment["path"],"state":"walking"},true)
+			Weyworld.first_leash(_state)
+		elif kind=="leash":
+			if result.has("field_plan"): deploy_source_worker(result["field_plan"],events)
+			else:
+				CampaignLeash.apply(self,_state,result)
+				var intro := Opening.new()
+				intro.configure(self,_state,events)
+				intro.leash_release(command,result,true)
+		elif kind in ["start_voyage","voyage_power","voyage_temple","voyage_chest"]:
 			Voyage.command(self,_state,command,events)
 		elif kind == "sculpt_drag":
 			for edit: Dictionary in result["edits"]:
@@ -769,7 +1280,7 @@ func step(commands: Array = []) -> Array:
 			if _state.has("opening"):
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
-				intro.sculpt_completed()
+				intro.sculpt_completed(sculpt_context)
 		elif kind in ["raise", "lower", "dig"]:
 			for cell: int in result["cells"]:
 				_dirty_rock_tiles(rock_tiles,cell)
@@ -782,6 +1293,16 @@ func step(commands: Array = []) -> Array:
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
 				intro.sculpt_completed()
+		elif kind=="deploy_worker":
+			if _state.has("opening"): deploy_source_worker(result,events)
+			else: Economy.staff_existing_plot(_state,result)
+		elif kind=="weyworld_release_ark":
+			release_ark_passenger(result["home"],result["follower"],result["target"])
+		elif kind=="repair_shrine" and result.has("ark_plan"):
+			for follower: Dictionary in _state["followers"]:
+				if follower["id"]==result["builder"]:
+					assign_source_shrine(follower,result["ark_plan"])
+					break
 		elif kind in ["home","repair_shrine","upgrade_home","work_plot"]:
 			var home := {"id": _state["next_id"], "x": int(command.get("x",0)), "z": int(command.get("z",0)), "progress": 0, "stored": 0, "residents": 0, "builder": result["builder"], "work_x": result["work_x"], "work_z": result["work_z"], "stalled": false}
 			if kind=="upgrade_home":
@@ -804,6 +1325,7 @@ func step(commands: Array = []) -> Array:
 			if kind!="upgrade_home":
 				_state["next_id"] += 1
 				_state["homes"].append(home)
+			if kind in ["home","upgrade_home"]: AbodeBeauty.refresh(_state,[home])
 			_spatial_revision+=1
 			for follower: Dictionary in _state["followers"]:
 				if follower["id"] == result["builder"]:
@@ -831,39 +1353,129 @@ func step(commands: Array = []) -> Array:
 				if _state.has("progression") and preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"TreeRockBelief"):
 					_state["belief"]+=int(vegetation.get("belief",{}).get(str(_tree_cells[cell]),0))
 				events.append({"type":"tree_removed","cell":cell})
-		elif kind=="campaign_ack" or kind=="campaign_view":
+				if _state.has("opening") and (Opening.supports_growth(_state["opening"]) or Opening.supports_discovery(_state["opening"])):
+					var intro := Opening.new()
+					intro.configure(self,_state,events)
+					if Opening.supports_discovery(_state["opening"]): intro.discovery_hook("onTreeDestroyed",[cell])
+					else: intro.promised_hook("onTreeDestroyed",[cell])
+		elif kind.begins_with("campaign_farm_"):
+			var intro:=Opening.new()
+			intro.configure(self,_state,events)
+			intro.farming_action(kind,result)
+		elif kind in ["campaign_builder_preview","campaign_mining_preview"]:
+			_state["opening"][kind.trim_prefix("campaign_")]={"x":result["x"],"z":result["z"],"members":result["members"]}
+		elif kind in ["campaign_builder_confirm","campaign_mining_confirm"]:
+			_state["opening"].erase(kind.get_slice("_",1)+"_preview")
+			Farming.merge(self,_state,result)
+		elif kind in ["campaign_builder_cancel","campaign_mining_cancel"]:
+			_state["opening"].erase(kind.get_slice("_",1)+"_preview")
+		elif kind in ["campaign_ack","campaign_view","sprog","campaign_show_level_card","campaign_dismiss_level_card","campaign_timeline_open","campaign_timeline_close","campaign_activate_shrine","campaign_leash_lesson_completed","campaign_select_dock","campaign_dock_go","campaign_first_voyage_returned"]:
 			var intro := Opening.new()
 			intro.configure(self,_state,events)
 			if kind=="campaign_view": intro.observe(command)
+			elif kind=="campaign_leash_lesson_completed": intro.finish_leash_lesson()
+			elif kind=="campaign_select_dock":
+				_state["opening"]["globals"]["selectedWorldObject"]=command["id"]
+				intro.dock_event_hook("onObjectSelected",[command["id"]])
+			elif kind=="campaign_dock_go":
+				_state["opening"]["globals"].erase("selectedWorldObject")
+				intro.dock_event_hook("onObjectSelected",[null])
+				events.append({"type":"campaign_start_first_voyage" if _state["opening"]["events_step"]==0 else "campaign_open_voyages"})
+			elif kind=="campaign_first_voyage_returned": intro.finish_first_voyage(command["won"])
+			elif kind=="sprog": intro.release_builder(int(command["home_id"]),result.get("shrine_plan",{}))
+			elif kind=="campaign_activate_shrine":
+				var site := source_shrine_site(str(command["id"]))
+				if preload("res://simulation/temple_rules.gd").complete(_state["progression"],site["id"]):
+					_give_progression_card(site["card"])
+					if Opening.supports_discovery(_state["opening"]):
+						var opening: Dictionary=_state["opening"]
+						var dock: bool=site["id"]==opening["definition"].get("dock_site_id")
+						if dock or site["id"]==opening["definition"].get("discovery_site_id"):
+							opening["dock_card_open" if dock else "pit_card_open"]=true
+							if not site["card"] in _state["progression"]["completed"]: Progression.complete(_state,site["card"])
+							events.append({"type":"campaign_show_card","card":site["card"]})
+							if dock: intro.leash_hook("onCardShown",[site["card"]])
+							else: intro.discovery_hook("onCardShown",[site["card"]],"PitOfDoom")
+					else: intro.shrine_hook("onCardReceived",[site["card"]])
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].get("pit_card_open",false):
+				var card: String=_state["opening"]["globals"]["CARD_DISCOVERY"]
+				intro.discovery_hook("onCardDismissed",[card])
+				intro.discovery_hook("onCardDismissed",[card],"PitOfDoom")
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].erase("dock_card_open"):
+				intro.leash_hook("onCardDismissed",[source_dock_site()["card"]])
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].get("farming_step")==1:
+				intro.farming_hook("onCardDismissed",[_state["opening"]["definition"]["farming_population_card"]["source_id"]])
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].get("superfast_step")==1:
+				intro.superfast_hook("onCardDismissed",[_state["opening"]["definition"]["grain_building_card"]["id"]])
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].erase("fountain_card_open"):
+				_state["opening"]["persistent"]["HappinessProgress"]=5
+				intro.clear_message(5603)
+			elif kind in ["campaign_show_level_card","campaign_dismiss_level_card"]: intro.level_card_action(kind=="campaign_show_level_card")
+			elif kind in ["campaign_timeline_open","campaign_timeline_close"]: intro.timeline_action(kind=="campaign_timeline_open")
 			else: intro.acknowledge(int(command["id"]))
 		elif kind == "place_model":
 			_state["props"].append({"id": _state["next_id"], "model_id": command["model_id"],
 				"x": int(command["x"]), "z": int(command["z"]), "turns": posmod(int(command.get("turns", 0)), 4)})
 			_state["next_id"] += 1
 		elif kind == "claim_card":
-			if _state.has("progression"):
+			if _state.has("opening") and command["card"]==Fountain.CARD:
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				intro.show_fountain_card(command["card"])
+				continue
+			elif _state.has("opening") and command["card"]=="Card_Settlement_Farming":
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				intro.farming_action("campaign_farm_card",result)
+				continue
+			elif _state.has("opening") and command["card"]=="Card_GrainToBuild":
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				intro.show_grain_building_card(command["card"])
+				continue
+			elif _state.has("progression"):
 				Progression.complete(_state,command["card"])
 				_refresh_abode_timers()
 			else: _state["campaign"]["cards"].append(command["card"])
 		elif kind=="research_card":
-			if Research.apply(_state["progression"],command):
+			var completed: bool=Research.apply(_state["progression"],command)
+			if _state.has("opening") and _state["opening"].has("chest_capacity"):
+				preload("res://simulation/source_availability.gd").spend(_state["opening"]["chest_capacity"],Research.canonical(_state["progression"],command["sticker"]),1)
+			if completed:
 				Progression.complete(_state,command["card"])
-				_refresh_abode_timers()
+				if not _state.has("opening"): _refresh_abode_timers()
 				events.append({"type":"claim_card","card":command["card"]})
+				if _state.has("opening") and Opening.supports_timeline(_state["opening"]):
+					var intro := Opening.new()
+					intro.configure(self,_state,events)
+					intro.timeline_hook("onAdvanceComplete",[command["card"]])
 		elif kind=="collect_settlement" or kind=="use_power" and command.get("power","") in Economy.POWERS:
 			Economy.apply(_state,command,result)
 		elif kind in ["open_chest","tap_object","use_power"]:
-			if _state.has("opening") and kind=="tap_object":
+			if _state.has("opening") and kind=="open_chest":
+				var chests := preload("res://simulation/authored_chests.gd").new()
+				chests.configure(self,_state,events)
+				chests.open(command)
+			elif _state.has("opening") and kind=="tap_object":
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
 				intro.tap_rock(int(command["cell"]))
 				if _state.has("source_plots"): preload("res://simulation/source_plot_schedule.gd").mark(_state["source_plots"]["schedule"],int(command["cell"])%int(_state["width"]),int(command["cell"])/int(_state["width"]))
-			else: _apply_progression(command,events)
+			else: _apply_progression(command,events,result)
 		elif kind == "collect":
-			_state["belief"] += result["amount"]
-			_state["collected"] += result["amount"]
+			var resource: String=result.get("resource","belief")
+			_state[resource]=int(_state.get(resource,0))+int(result["amount"])
+			if resource=="belief": _state["collected"] += result["amount"]
 			for home: Dictionary in _state["homes"]:
-				if home["id"] in result["homes"]: home["stored"] = 0
+				if home["id"] in result["homes"]: home["stored" if resource=="belief" else "harvest_accumulator"] = 0
+			if _state.has("opening") and _state["opening"]["phase"]=="belief":
+				var intro := Opening.new()
+				intro.configure(self,_state,events)
+				for id: int in result["homes"]: intro.belief_hook("onCollectBelief",[id])
+			elif _state.has("opening") and resource=="wheat":
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				for id: int in result["homes"]: intro.superfast_hook("onCollectGrain",[id])
 		var event := {"type":kind,"message":result["reason"]}
 		if kind=="claim_card": event["card"]=command["card"]
 		if kind=="use_power": event["power"]=command["power"]
@@ -879,6 +1491,10 @@ func step(commands: Array = []) -> Array:
 		var alive := func(cell: int) -> bool: return preload("res://simulation/authored_rocks.gd").alive(_state,cell)
 		motion.advance(_state["rock_motion"],TICK_SECONDS,float(_state["opening"]["definition"]["rock_motion_config"]["duration"]),source_rock_target,alive)
 	_state["tick"] += 1
+	if _state.has("leash_lesson"):
+		LeashLesson.advance(self,_state,events)
+		return events
+	_advance_land_effects(events)
 	if _state.has("voyage"):
 		Voyage.advance(self,_state,events)
 		return events
@@ -887,7 +1503,31 @@ func step(commands: Array = []) -> Array:
 		intro.configure(self,_state,events)
 		_advance_source_plots()
 		intro.advance()
+		var rain:=Rain.advance(self,_state,TICK_SECONDS)
+		if _state["opening"].get("farming_step",-1)>=4 or Farming.MINING_POWER in _state["progression"]["powers"]:
+			for follower: Dictionary in _state["followers"]:
+				if follower.has("workplace") and follower["job"]==-1: Economy.update_agent(self,_state,follower,rain)
+		if CampaignLeash.enabled(_state):
+			CampaignLeash.advance_walks(self,_state)
+			var sacrificed:=Pit.advance(self,_state,_random,TICK_SECONDS,events)
+			for id: int in sacrificed: intro.discovery_hook("onFollowerSacrificed",[id],"PitOfDoom")
+			if not sacrificed.is_empty() and _state["followers"].is_empty():
+				for start: Dictionary in _state["opening"]["definition"]["starts"]:
+					var follower:=_agent(start["x"],start["z"],false)
+					follower.merge({"rotation":start["source_args"][3],"female":start["source_args"][5]},true)
+					_state["followers"].append(follower)
+		if preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"Happiness"):
+			preload("res://simulation/happiness.gd").advance(_state["progression"],TICK_SECONDS)
+		preload("res://simulation/building_stats.gd").advance_belief(_state,int(_state.get("build_ticks",BUILD_TICKS)))
+		Collector.advance(_state,TICK_SECONDS,events)
 		_advance_source_influence(events)
+		if _state["opening"].has("chests"):
+			var chests := preload("res://simulation/authored_chests.gd").new()
+			chests.configure(self,_state,events)
+			if Opening.supports_discovery(_state["opening"]): chests.register_sticker_chests(_random)
+			chests.advance(_random)
+			if Opening.supports_first_chest(_state["opening"]) and events.any(func(event: Dictionary) -> bool: return event["type"]=="chest_opened"):
+				intro.promised_hook("onStickerReceived",[])
 		return events
 	# Small passive income prevents a world from getting stuck after sculpting.
 	if not _state.has("campaign") and _state["tick"] % 30 == 0:
@@ -897,19 +1537,13 @@ func step(commands: Array = []) -> Array:
 	_advance_construction()
 	for sheep: Dictionary in _state["sheep"]:
 		_update_agent(sheep, true)
+	preload("res://simulation/building_stats.gd").advance_belief(_state,int(_state.get("build_ticks",BUILD_TICKS)))
 	for home: Dictionary in _state["homes"]:
 		var duration: int = home.get("build_ticks",_state.get("build_ticks", BUILD_TICKS))
-		if home.get("kind","") in ["farm","mine"]: continue
+		if home.get("kind","") in ["farm","mine","ark"]: continue
 		if home.get("kind","")=="shrine":
 			if home["progress"]>=duration: _complete_shrine(home)
 			continue
-		var belief_unlocked := preload("res://simulation/building_stats.gd").belief_enabled(_state)
-		if belief_unlocked and int(home["residents"])>0 and home["progress"] >= duration and _state["tick"] % preload("res://simulation/building_stats.gd").belief_interval(_state) == 0:
-			var production := preload("res://simulation/building_stats.gd").belief_per_cycle(home)
-			home["belief_accumulator"]=float(home.get("belief_accumulator",0))+production
-			var earned := floori(home["belief_accumulator"])
-			home["belief_accumulator"]-=earned
-			home["stored"] = mini(int(home.get("max_belief",30)), int(home["stored"]) + earned)
 		var birth_ticks := preload("res://simulation/building_stats.gd").birth_interval(_state,home)
 		if home["progress"] >= duration and home["residents"] < int(home.get("capacity",2)) and _state["tick"] % birth_ticks == 0:
 			if birth_space_available(home):
@@ -917,6 +1551,7 @@ func step(commands: Array = []) -> Array:
 				for birth in range(births): _state["followers"].append(_agent(home["work_x"], home["work_z"], false))
 				home["residents"] += births
 	if _state.has("campaign"): _update_campaign()
+	if _state.has("weyworld"): Weyworld.advance(self,_state)
 	if _state.has("progression"):
 		preload("res://simulation/campaign_chests.gd").advance(self,_state,_random,events)
 		preload("res://simulation/happiness.gd").advance(_state["progression"],TICK_SECONDS)
@@ -929,6 +1564,20 @@ func step(commands: Array = []) -> Array:
 
 
 func _update_agent(agent: Dictionary, animal: bool) -> void:
+	if agent.has("ark_passenger"): return
+	if agent.has("weyworld_destination"):
+		var goal: Array=agent["weyworld_destination"]
+		var target:=Vector2i(goal[0],goal[1])
+		var position:=Vector2(agent["x"],agent["z"])
+		if position.distance_to(Vector2(target))<0.01:
+			agent.erase("weyworld_destination")
+			agent["path"]=[]
+			agent["state"]="idle"
+		else:
+			if agent["path"].is_empty(): agent["path"]=_route(Vector2i(position.round()),target)
+			finish_promised_approach(agent,target)
+			advance_agent_path(agent,animal)
+		return
 	if not animal and _state.has("progression") and Economy.update_agent(self,_state,agent): return
 	var start := Vector2i(roundi(agent["x"]), roundi(agent["z"]))
 	var totem_target := Vector2i(-1,-1)
@@ -972,11 +1621,17 @@ func _update_agent(agent: Dictionary, animal: bool) -> void:
 		var target := start + Vector2i(_random.randi_range(-4, 4), _random.randi_range(-4, 4))
 		agent["path"] = _route(start, target)
 		agent["wait"] = _random.randi_range(10, 35)
+	advance_agent_path(agent,animal)
+
+
+func advance_agent_path(agent: Dictionary,animal: bool) -> void:
 	if not agent["path"].is_empty():
 		var cell := int(agent["path"][0])
 		var target := Vector2(cell % _state["width"], int(cell / _state["width"]))
 		var current := Vector2(agent["x"], agent["z"])
-		var next := current.move_toward(target, runtime_value("sheep_speed",1.0)*TICK_SECONDS if animal else float(follower_values(agent).get("RouteSpeed",runtime_value("follower_speed",1.3)))*TICK_SECONDS)
+		var speed := float(agent.get("leash_route_speed",0.0))
+		if speed<=0.0: speed=runtime_value("sheep_speed",1.0) if animal else float(follower_values(agent).get("RouteSpeed",runtime_value("follower_speed",1.3)))
+		var next := current.move_toward(target,speed*TICK_SECONDS)
 		agent["x"] = next.x
 		agent["z"] = next.y
 		agent["state"] = "walking"
@@ -989,6 +1644,7 @@ func _update_agent(agent: Dictionary, animal: bool) -> void:
 func _recover_agents() -> void:
 	for agents: Array in [_state["followers"], _state["sheep"]]:
 		for agent: Dictionary in agents:
+			if agent.has("sacrifice_due") or agent.has("ark_passenger"): continue
 			agent["path"] = []
 			var origin := Vector2i(roundi(agent["x"]), roundi(agent["z"]))
 			if _state.has("opening") and int(agent["id"]) in _state["opening"]["protected"]: continue
@@ -1019,7 +1675,11 @@ func _recover_agents() -> void:
 
 func export_state() -> Dictionary:
 	var detached := _state.duplicate(true)
+	if detached.has("opening"):
+		detached["opening"].erase("builder_preview")
+		detached["opening"].erase("mining_preview")
 	if detached.has("source_influence"): detached["source_influence"]=preload("res://simulation/source_influence_areas.gd").export_state(_state["source_influence"])
+	if detached.has("map_fields"): detached["map_fields"]=SourceRaster.export_state(_state["map_fields"])
 	if detached["terrain"] is PackedByteArray: detached["terrain"] = Array(detached["terrain"])
 	if detached.get("rocks") is PackedByteArray: detached["rocks"] = Array(detached["rocks"])
 	if detached.get("rock_heights") is PackedByteArray: detached["rock_heights"] = Array(detached["rock_heights"])
@@ -1034,7 +1694,9 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 	if data.get("schema_version") != 1 or not data.get("state") is Dictionary or not str(data.get("rng_state", "")).is_valid_int():
 		return false
 	var state: Dictionary = data["state"]
+	if state.has("map_fields") and not SourceRaster.valid(state["map_fields"]): return false
 	if state.has("opening") and not Opening.valid(state["opening"]): return false
+	if state.has("weyworld") and not Weyworld.valid(state): return false
 	if state.has("source_influence"):
 		if not state.has("opening") or not state.get("progression") is Dictionary: return false
 		var area_rules: Variant=state["progression"].get("rules")
@@ -1094,6 +1756,8 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 				return false
 			ids[int(entry["id"])] = true
 			if key == "homes":
+				if entry.has("sacrificed_followers") and not Opening.integer(entry["sacrificed_followers"],0,1000000000): return false
+				if entry.has("beauty_fraction") and not preload("res://simulation/source_house_environment.gd").valid_beauty_fraction(entry["beauty_fraction"]): return false
 				if entry.has("temple_work") and (not (entry["temple_work"] is int or entry["temple_work"] is float) or not is_finite(float(entry["temple_work"])) or float(entry["temple_work"])<0 or preload("res://simulation/source_terrain.gd").f32(float(entry["temple_work"]))!=float(entry["temple_work"])): return false
 				if entry.has("work_accumulator") and (not (entry["work_accumulator"] is int or entry["work_accumulator"] is float) or not is_finite(float(entry["work_accumulator"])) or entry["work_accumulator"]<0 or entry["work_accumulator"]>=1): return false
 				if entry.has("new_builder_contribution") and not preload("res://simulation/construction_work.gd").valid_exponent(entry["new_builder_contribution"]): return false
@@ -1107,7 +1771,8 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 				if entry["progress"] < 0 or entry["progress"] > int(entry.get("build_ticks",state.get("build_ticks", BUILD_TICKS))) or entry["stored"] < 0 or entry["stored"] > int(entry.get("max_belief",30)) or not entry.get("stalled") is bool:
 					return false
 				for field in ["build_ticks","birth_ticks","span","capacity"]:
-					if entry.has(field) and (not (entry[field] is int or entry[field] is float) or not is_finite(float(entry[field])) or entry[field]<1): return false
+					var minimum := 0 if field=="capacity" and entry.get("kind","") in ["ark","shrine"] else 1
+					if entry.has(field) and (not (entry[field] is int or entry[field] is float) or not is_finite(float(entry[field])) or entry[field]<minimum): return false
 			else:
 				if not entry.get("path") is Array or not entry.get("state") is String:
 					return false
@@ -1117,6 +1782,15 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 				for cell: Variant in entry["path"]:
 					if not (cell is int or cell is float) or cell < 0 or cell >= width * width:
 						return false
+				if entry.has("leash_goal"):
+					if not entry["leash_goal"] is Array or entry["leash_goal"].size()!=2: return false
+					for coordinate: Variant in entry["leash_goal"]:
+						if not CampaignLeash.integer(coordinate,0) or coordinate>=width: return false
+				if entry.has("leash_sacrifice") or entry.has("sacrifice_due"):
+					if key!="followers" or entry.get("leash_sacrifice")!=true or not state.get("opening",{}).get("definition",{}).has("pit_sacrifice"): return false
+					if entry.has("sacrifice_due"):
+						if entry.has("leash_goal") or not entry["state"] in Pit.CLIPS or not CampaignLeash.integer(entry["sacrifice_due"],0): return false
+					elif not entry.has("leash_goal"): return false
 	var props: Variant = state.get("props", [])
 	if not props is Array or props.size() > 4096:
 		return false
@@ -1128,6 +1802,16 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 				return false
 		if prop["x"] < 0 or prop["x"] >= width or prop["z"] < 0 or prop["z"] >= width or prop["turns"] < 0 or prop["turns"] > 3 or prop["id"] <= 0 or prop["id"] >= state["next_id"] or ids.has(int(prop["id"])):
 			return false
+		if prop.get("kind")=="fountain":
+			var rules: Dictionary=state.get("opening",{}).get("definition",{}).get("fountain",{})
+			if rules.is_empty() or prop["model_id"]!=rules["model"] or not CampaignLeash.integer(prop.get("reaction_until"),0): return false
+			var area:=Fountain.bounds(prop,rules)
+			if not Rect2i(0,0,width,width).encloses(area): return false
+		if prop.get("kind")==Collector.KIND:
+			var rules:=Collector.rules_for(state)
+			if rules.is_empty() or prop["model_id"]!=rules["model"]: return false
+			if not Rect2i(0,0,width,width).encloses(Collector.bounds(prop,rules)): return false
+			if prop.has("ready_since") and not Opening.integer(prop["ready_since"],-1000000,int(state["tick"])): return false
 		ids[int(prop["id"])] = true
 	if state.has("progression") and not Progression.valid(state["progression"],width): return false
 	if state.has("progression") and not Economy.valid_world(state): return false
@@ -1177,10 +1861,13 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 	_spatial_revision=0
 	_blocked_stamp=Vector2i(-1,-1)
 	_house_specs.clear()
-	if _state.has("progression"): _state["progression"]=Progression.canonical_numbers(_state["progression"])
+	if _state.has("progression"):
+		_state["progression"]=Progression.canonical_numbers(_state["progression"])
+		_state["progression"].erase("beautified")
 	if _state.has("source_influence"):
 		_state["source_influence"]=preload("res://simulation/source_influence_areas.gd").restore(_state["source_influence"],_state["progression"]["rules"]["influence_areas"],_state["opening"]["definition"]["influence_rules"])
 		Influence.refresh(_state)
+	if _state.has("map_fields"): _state["map_fields"]=SourceRaster.restore(_state["map_fields"])
 	if _state.has("source_plots"):
 		_state["source_plots"]=preload("res://simulation/source_plot_registry.gd").restore(_state["source_plots"])
 	if _state.has("opening"):
@@ -1249,6 +1936,8 @@ func _initialize_campaign(config: Dictionary) -> void:
 	_state["terrain"] = config["terrain"].duplicate()
 	_state["campaign"] = {"map": str(config.get("name", "Homeworld")), "map_id": str(config.get("id", "homeworld")), "cards": [], "stage": 0, "automatic_settlement": config.get("automatic_settlement",true)}
 	_state["belief"] = int(config["configuration"].get("InitialBelief", "75"))
+	for pair: Array in [["wheat","InitialWheat"],["ore","InitialOre"]]:
+		if config["configuration"].has(pair[1]): _state[pair[0]]=int(config["configuration"][pair[1]])
 	_state["home_cost"] = 0
 	var shelter: Array = config["tables"]["balance/housevalues.csv"][2]
 	_state["build_ticks"] = roundi(float(shelter[6])/TICK_SECONDS)
@@ -1257,8 +1946,11 @@ func _initialize_campaign(config: Dictionary) -> void:
 	_state["sheep"] = []
 	_state["trees"] = []
 	_state["next_id"] = 1
-	for start: Dictionary in config["followers"]:
-		_state["followers"].append(_agent(start["x"], start["z"], false))
+	# The loose map starts support standalone Weyworld. An Ark arrival gets
+	# its own passengers plus the two followers spawned by the source script.
+	if not config.has("ark_passengers"):
+		for start: Dictionary in config["followers"]:
+			_state["followers"].append(_agent(start["x"], start["z"], false))
 	var tree_field: PackedByteArray = config.get("tree_field", PackedByteArray())
 	if config.has("source_trees"):
 		_state["trees"]=config["source_trees"].duplicate(true)
@@ -1274,7 +1966,12 @@ func _initialize_campaign(config: Dictionary) -> void:
 	_dry_land = 0
 	for value: int in _state["terrain"]:
 		if value > 0: _dry_land += 1
-	_state["campaign"]["population_unlocks"] = config["tables"].get("balance/populationlevels.csv", []).duplicate(true)
+	if config.get("progression_rules",{}).has("registered_scope"):
+		_state["campaign"]["population_unlocks"]=[]
+		for level: Dictionary in config["progression_rules"]["research_levels"]:
+			if not level.has("resource"): _state["campaign"]["population_unlocks"].append([str(int(level["population"])),level["card"]])
+	else:
+		_state["campaign"]["population_unlocks"] = config["tables"].get("balance/populationlevels.csv", []).duplicate(true)
 	_state["camera_start"] = {"x":int(config["followers"][0]["x"]),"z":int(config["followers"][0]["z"])}
 	_state["source_map"] = {"name": str(config.get("name", "Homeworld")), "id": str(config.get("id", "homeworld")), "sea_level": int(config["sea_level"]), "height_sha256": config["height_sha256"]}
 	if config.has("progression_rules"):
@@ -1282,8 +1979,14 @@ func _initialize_campaign(config: Dictionary) -> void:
 		_state["progression"] = Progression.initialize(config["progression_rules"],_state["terrain"],_state["width"])
 		initialize_rocks(config.get("rock_field",PackedByteArray()),_state["terrain"])
 		_state["rock_density_version"]=int(config.get("rock_density_version",0))
+		if config.has("arrival"): _initialize_weyworld_arrival(config["arrival"],config.get("ark_passengers",[]))
+		if config.has("ark_research"): Progression.inherit_research(_state,config["ark_research"])
 		Progression.refresh(_state)
 		Influence.refresh(_state)
+		Weyworld.initialize(self,_state)
+		if config.has("free_harvest"):
+			Economy.place_free_harvest(_state,config["free_harvest"])
+			Economy.fill_free_harvest(_state)
 		Immutable.freeze(_state["progression"]["rules"])
 	if config.has("story"):
 		_state["opening"]=Opening.initialize(config["story"])
@@ -1315,10 +2018,37 @@ func _initialize_campaign(config: Dictionary) -> void:
 		_state["voyage"]["definition"]=Immutable.freeze(_state["voyage"]["definition"])
 
 
+func _initialize_weyworld_arrival(arrival: Dictionary,passengers: Array) -> void:
+	var ark: Dictionary=arrival["ark"]
+	var x := int(ark["x"])
+	var z := int(ark["z"])
+	var span := int(ark["size"])-1
+	var half := span/2
+	var ticks := int(ark["build_ticks"])
+	var id: int=_state["next_id"]
+	_state["homes"].append({"id":_state["next_id"],"kind":"ark","x":x-half,"z":z-half,
+		"anchor_x":x,"anchor_z":z,"span":span,"work_x":x,"work_z":z,"model_id":ark["model_id"],
+		"name":ark["title"],"capacity":passengers.size(),"residents":passengers.size(),"stored":0,"min_belief":0,"max_belief":0,
+		"build_ticks":ticks,"progress":ticks,"stalled":false,"builder":-1,"access_path":[]})
+	_state["next_id"]+=1
+	for passenger: Dictionary in passengers:
+		var agent:=_agent(x,z,false)
+		agent.merge({"state":"indoors","indoors_home":id,"ark_passenger":true,"female":passenger["female"],"race":passenger["race"]},true)
+		_state["followers"].append(agent)
+	for start: Dictionary in arrival["followers"]:
+		var agent := _agent(start["x"],start["z"],false)
+		agent["female"]=start["female"]
+		_state["followers"].append(agent)
+
+
 func _update_campaign() -> void:
 	# Followers settle available nearby plots; player shaping remains authoritative.
-	if _state.has("progression"): Progression.refresh(_state)
-	if _state.has("progression"): Influence.refresh(_state)
+	if _state.has("progression"):
+		var p: Dictionary=_state["progression"]
+		var revision: int=p.get("influence_revision",0)
+		Progression.refresh(_state)
+		Influence.refresh(_state)
+		if p["rules"].has("registered_scope") and revision!=p.get("influence_revision",0): Economy.fill_free_harvest(_state)
 	var repair_queued := false
 	if _state["tick"]%10==0:
 		if _state["campaign"]["automatic_settlement"]:
@@ -1328,15 +2058,16 @@ func _update_campaign() -> void:
 		# the next tick instead of reserving them for another home meanwhile.
 		if not repair_queued: _reassign_builders()
 	if not repair_queued and _state["campaign"]["automatic_settlement"] and _state["tick"] % 10 == 0 and (_state.has("progression") or _state["homes"].size()<24):
+		var max_rank:=Weyworld.highest_abode_rank(_state,int(_state.get("progression",{}).get("max_rank",1)))
 		for follower: Dictionary in _state["followers"]:
-			if follower["job"] != -1 or follower["state"]=="worshipping" or follower.has("workplace"): continue
+			if follower["job"] != -1 or follower["state"]=="worshipping" or follower.has("workplace") or follower.has("ark_passenger") or follower.has("weyworld_destination"): continue
 			if _state.has("progression") and _state["progression"]["totem"].get("active",false) and _state["followers"].find(follower)<int(_state["progression"]["totem_capacity"]): continue
 			var placed := false
 			var radius := maxi(1,mini(roundi(runtime_value("home_search_radius",4)),floori(float(follower_values(follower).get("Vision",4)))))
 			for z in range(roundi(follower["z"])-radius,roundi(follower["z"])+radius+1):
 				for x in range(roundi(follower["x"])-radius,roundi(follower["x"])+radius+1):
 					if placed: break
-					for rank in range(int(_state.get("progression",{}).get("max_rank",1)),0,-1):
+					for rank in range(max_rank,0,-1):
 						var command := {"type": "home", "x": x, "z": z,"rank":rank}
 						if _validate(command)["ok"]:
 							queue_command(command)
@@ -1380,7 +2111,7 @@ func _inspect_shrine_repair(shrine: Dictionary,costs: Dictionary) -> Dictionary:
 	for z in range(region.position.y,region.end.y): work_cells.append_array([Vector2i(region.position.x-1,z),Vector2i(region.end.x,z)])
 	for x in range(region.position.x,region.end.x): work_cells.append_array([Vector2i(x,region.position.y-1),Vector2i(x,region.end.y)])
 	for follower: Dictionary in _state["followers"]:
-		if follower["job"]!=-1 or follower.has("workplace") or follower["state"]=="worshipping": continue
+		if follower["job"]!=-1 or follower.has("workplace") or follower.has("ark_passenger") or follower.has("weyworld_destination") or follower["state"]=="worshipping": continue
 		var start := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
 		if Vector2(start).distance_to(Vector2(anchor))>float(follower_values(follower).get("Vision",15)): continue
 		for work: Vector2i in work_cells:
@@ -1425,7 +2156,7 @@ func _reassign_builders(only_shrines: bool=false) -> void:
 			if assigned>=slots: break
 			if follower.has("workplace") and follower["workplace"]!=home["id"]: continue
 			if home.get("kind","") in ["farm","mine"] and follower.get("workplace",-1)!=home["id"]: continue
-			if follower["job"]!=-1 or follower["state"]=="worshipping": continue
+			if follower["job"]!=-1 or follower["state"]=="worshipping" or follower.has("ark_passenger") or follower.has("weyworld_destination"): continue
 			var start := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
 			var reach := float(follower_values(follower).get("Vision",15)) if home.get("kind","")=="shrine" else float(home.get("vision_radius",1000000))
 			if start.distance_to(Vector2i(home["x"],home["z"]))>reach: continue
@@ -1453,15 +2184,22 @@ func _advance_construction() -> void:
 	for follower: Dictionary in _state["followers"]:
 		if follower["job"]==-1 or follower["state"]!="building": continue
 		var id: int=follower["job"]
-		if not groups.has(id): groups[id]={"count":0,"skill":0.0}
+		if not groups.has(id): groups[id]={"count":0,"skill":0.0,"workers":[]}
 		groups[id]["count"]+=1
 		groups[id]["skill"]+=float(follower_values(follower).get("JobSkill",1))
+		groups[id]["workers"].append(follower["id"])
 	for home: Dictionary in _state["homes"]:
 		var id: int=home["id"]
 		var duration: int=home.get("build_ticks",_state.get("build_ticks",BUILD_TICKS))
 		if home["progress"]>=duration or not groups.has(id): continue
 		var group: Dictionary=groups[id]
 		if home.get("kind","")=="shrine":
+			if home.get("authored_shrine",false) and not source_shrine_clear(source_shrine_site(home["shrine_id"]),id):
+				home["stalled"]=true
+				continue
+			if home.has("ark_crew"):
+				for worker: int in group["workers"]:
+					home["ark_crew"][str(worker)]=true
 			var exponent := float(_state["progression"]["rules"]["config"]["templeFixerFalloff"])
 			var prior := float(home.get("temple_work",preload("res://simulation/source_terrain.gd").f32((float(home["progress"])+float(home.get("work_accumulator",0)))*TICK_SECONDS)))
 			home["temple_work"]=preload("res://simulation/source_temple_repair.gd").work_value(prior,TICK_SECONDS*runtime_value("build_rate",1.0),int(group["count"]),int(group["count"]),float(group["skill"]),exponent)
@@ -1491,6 +2229,536 @@ func _advance_construction() -> void:
 			follower["state"]="idle"
 			follower.erase("work_x")
 			follower.erase("work_z")
+
+
+func source_shrine_site(id: String="") -> Dictionary:
+	if id.is_empty():
+		var opening: Dictionary=_state["opening"]
+		id=opening["definition"].get("discovery_site_id" if Opening.supports_discovery(opening) else "first_shrine_id","")
+	for site: Dictionary in _state["progression"]["shrines"]:
+		if site["id"]==id: return site
+	return {}
+
+
+func source_dock_site() -> Dictionary:
+	var id: String=_state["opening"]["definition"].get("dock_site_id","")
+	return source_shrine_site(id) if not id.is_empty() else {}
+
+
+func source_land_expansion(site: Dictionary) -> bool:
+	var kind: String=site.get("type","")
+	var supported: bool=kind=="Shrine_LandExp" or kind=="Shrine_OreLandExp" and _state["opening"]["definition"].has("mining_core")
+	return supported and site["id"]!=_state["opening"]["definition"].get("first_shrine_id") and not site["model_id"].is_empty()
+
+
+func source_ark_site(site: Dictionary) -> bool:
+	return site.get("id","")!="" and site["id"]==_state["opening"]["definition"].get("ark",{}).get("site_id")
+
+
+func ark_manifest() -> Array:
+	var id: String=_state.get("opening",{}).get("definition",{}).get("ark",{}).get("site_id","")
+	if id.is_empty() or not source_shrine_site(id).get("complete",false): return []
+	var hull:=Ark.hull(_state,id)
+	if hull.is_empty(): return []
+	var manifest: Array=[]
+	for follower: Dictionary in _state["followers"]:
+		if follower.get("indoors_home")==hull["id"] and hull["ark_crew"].has(str(follower["id"])):
+			manifest.append({"female":follower.get("female",false),"race":follower["race"]})
+	return manifest
+
+
+func ark_research() -> Dictionary:
+	if not _state.has("opening"): return {}
+	var source: Dictionary=_state["progression"]
+	var research: Dictionary={}
+	for key: String in ["discovered","completed","inventory","research","assigned_resources","reward_history","max_rank","abode_type","totem_capacity","age"]:
+		if not source.has(key): continue
+		var value: Variant=source[key]
+		research[key]=value.duplicate(true) if value is Array or value is Dictionary else value
+	return research
+
+
+func inspect_ark_release(id: Variant,destination: Vector2i=Vector2i(-1,-1)) -> Dictionary:
+	var reject:={"ok":false,"cost":0,"reason":""}
+	if _state.get("source_map",{}).get("id")!="homeworld7": return reject
+	for home: Dictionary in _state["homes"]:
+		if home["id"]!=id or home.get("kind")!="ark" or home["residents"]<=0: continue
+		var bounds:=Rect2i(home["x"],home["z"],home["span"],home["span"])
+		for index in range(bounds.size.x):
+			for point: Vector2i in [Vector2i(bounds.position.x-1,bounds.position.y+index),Vector2i(bounds.end.x,bounds.position.y+index),Vector2i(bounds.position.x+index,bounds.position.y-1),Vector2i(bounds.position.x+index,bounds.end.y)]:
+				if height_at(point.x,point.y)<=0 or not can_act_at(point.x,point.y) or _occupied(point.x,point.y): continue
+				var path: Array=[]
+				if destination.x>=0 and point!=destination:
+					path=_route(point,destination)
+					if path.is_empty(): continue
+				for follower: Dictionary in _state["followers"]:
+					if follower.get("ark_passenger",false) and follower.get("indoors_home")==id:
+						return {"ok":true,"cost":0,"reason":"","home":home,"follower":follower,"target":point,"path":path}
+	return reject
+
+
+func release_ark_passenger(home: Dictionary,follower: Dictionary,target: Vector2i) -> void:
+	home["residents"]-=1
+	follower.erase("indoors_home")
+	follower.erase("ark_passenger")
+	follower.merge({"x":float(target.x),"z":float(target.y),"state":"idle"},true)
+	Weyworld.first_leash(_state)
+
+
+func inspect_weyworld_leash(command: Dictionary) -> Dictionary:
+	var reject:={"ok":false,"cost":0,"reason":""}
+	var rules: Dictionary=Weyworld.rules(_state)["leash"]
+	var width: int=_state["width"]
+	var x: Variant=command.get("x")
+	var z: Variant=command.get("z")
+	var home_id: Variant=command.get("home_id",-1)
+	var selected: Variant=command.get("followers")
+	if not CampaignLeash.coordinate(x,width) or not CampaignLeash.coordinate(z,width) or not CampaignLeash.integer(home_id,-1) or not selected is Array: return reject
+	if not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"Leash") and _state["weyworld"]["phase"]!=0: return reject
+	var point:=Vector2i(roundi(float(x)),roundi(float(z)))
+	if not can_act_at(point.x,point.y) or height_at(point.x,point.y)<=0 or _occupied(point.x,point.y): return reject
+	var result: Dictionary
+	var orders: Array=[]
+	var cost:=0
+	if home_id>=0:
+		if not selected.is_empty(): return reject
+		result=inspect_ark_release(home_id,point)
+		if not result["ok"] or Vector2(result["home"]["anchor_x"],result["home"]["anchor_z"]).distance_to(Vector2(point))>float(rules["max_length"]): return reject
+		orders.append({"agent":result["follower"],"path":result["path"]})
+		cost=rules["home_cost"]
+	else:
+		if selected.is_empty() or selected.size()>_state["followers"].size(): return reject
+		var ids: Dictionary={}
+		for id: Variant in selected:
+			if not CampaignLeash.integer(id,1) or ids.has(int(id)): return reject
+			ids[int(id)]=true
+		for agent: Dictionary in _state["followers"]:
+			if not ids.erase(int(agent["id"])): continue
+			var origin:=Vector2(agent["x"],agent["z"])
+			if agent["job"]!=-1 or agent.has("ark_passenger") or agent.has("workplace") or origin.distance_to(Vector2(point))>float(rules["max_length"]): return reject
+			var cell:=Vector2i(origin.round())
+			var path:=_route(cell,point)
+			if cell!=point and path.is_empty(): return reject
+			orders.append({"agent":agent,"path":path})
+		if not ids.is_empty(): return reject
+		result={"reason":""}
+		cost=selected.size()*int(rules["follower_cost"])
+	result.merge({"ok":_state["belief"]>=cost,"cost":cost,"orders":orders,"destination":[point.x,point.y]},true)
+	return result
+
+
+func inspect_ark_builder(site: Dictionary) -> Dictionary:
+	var center:=Vector2(site["x"],site["z"])
+	for follower: Dictionary in _state["followers"]:
+		if follower["state"]!="idle" or follower["job"]!=-1 or follower.has("workplace") or follower.has("entering_home") or follower.get("seeking_plot",false): continue
+		var origin:=Vector2(follower["x"],follower["z"])
+		if origin.distance_to(center)>float(follower_values(follower).get("Vision",15)): continue
+		var plan:=source_shrine_repair_plan(site,Vector2i(origin.round()))
+		if not plan.is_empty(): return {"ok":true,"cost":0,"reason":"","builder":follower["id"],"ark_plan":plan}
+	return {"ok":false,"cost":0,"reason":""}
+
+
+func source_ark_berths(site: Dictionary) -> int:
+	var home:=Ark.hull(_state,site["id"])
+	if home.is_empty(): return 0
+	var reserved := 0
+	for follower: Dictionary in _state["followers"]:
+		if follower.get("ark_boarding")==site["id"]: reserved+=1
+	return maxi(0,int(home["capacity"])-int(home["residents"])-reserved)
+
+
+func source_ark_boarding_plan(site: Dictionary,origin: Vector2i,reserved: Dictionary) -> Dictionary:
+	if not site["complete"] or not source_plot_eligible(site["x"],site["z"]): return {}
+	return _promised_abode_approach(origin,source_shrine_bounds(site),reserved,true)
+
+
+func board_source_ark(site_id: String,follower: Dictionary) -> void:
+	var home:=Ark.hull(_state,site_id)
+	Ark.board(home,follower)
+	_state["progression"]["revision"]+=1
+
+
+func source_shrine_layer(site: Dictionary) -> int:
+	if site.get("source_height")!=null: return int(site["source_height"])
+	return int(_state["opening"]["definition"]["raw_floor"][int(site["z"])*int(_state["width"])+int(site["x"])])
+
+
+func source_shrine_clear(site: Dictionary,ignore_home: int=-1) -> bool:
+	if site.is_empty(): return false
+	var anchor := Vector2i(site["x"],site["z"])
+	if not can_act_at(anchor.x,anchor.y) or _occupied(anchor.x,anchor.y,ignore_home) or not plot_obstruction(anchor.x,anchor.y).is_empty(): return false
+	var terrain := preload("res://simulation/source_terrain.gd")
+	var footprint := {"x":float(site["x"]),"z":float(site["z"]),"height":terrain.surface_height(source_shrine_layer(site)),"footprint_width":int(site["width"])}
+	return preload("res://simulation/source_temple_footprint.gd").count(footprint,_state["opening"]["definition"]["temple_footprint_rules"],source_raw_height_at)==0
+
+
+func source_shrine_plan(candidate: Dictionary) -> Dictionary:
+	var discovery := Opening.supports_discovery(_state["opening"])
+	if not discovery and _state["opening"]["shrine_step"] not in [2,3]: return {}
+	if not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"BuildTemplesClaim" if discovery else "BuildExpansions"): return {}
+	var source: Dictionary=_state["opening"]["definition"]
+	var abode: Dictionary=candidate["home"]
+	var values: Dictionary=source["mud_hut"]["values"] if abode.get("model_id")==source["mud_hut"]["model_id"] else source["first_abode_values"]["values"]
+	var follower: Dictionary=candidate["follower"]
+	var origin := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
+	var sites: Array=[source_shrine_site()]
+	if CampaignLeash.enabled(_state):
+		sites.append(source_dock_site())
+		for site: Dictionary in _state["progression"]["shrines"]:
+			if source_land_expansion(site) or source_ark_site(site): sites.append(site)
+	for site: Dictionary in sites:
+		if site.is_empty() or origin.distance_to(Vector2i(site["x"],site["z"]))>float(abode.get("vision_radius",values["visionradius"])): continue
+		var plan:=source_shrine_repair_plan(site,origin)
+		if not plan.is_empty(): return plan
+	return {}
+
+
+func source_shrine_repair_plan(site: Dictionary,origin: Vector2i,reserved: Dictionary={}) -> Dictionary:
+	if site.is_empty() or site["complete"] or site.get("repaired",false): return {}
+	var ore_beacon: bool=site.get("type")=="Shrine_OreLandExp"
+	var ark := source_ark_site(site)
+	if (ore_beacon or ark) and not Economy.spends_resource(_state,"ore"): return {}
+	if ark and not source_plot_eligible(site["x"],site["z"]): return {}
+	var building_id := -1
+	for home: Dictionary in _state["homes"]:
+		if home.get("shrine_id")==site["id"]: building_id=int(home["id"]); break
+	if not source_shrine_clear(site,building_id): return {}
+	var payment: Dictionary={}
+	if building_id==-1 and (ore_beacon or ark):
+		var quote:=preload("res://simulation/temple_rules.gd").costs(_state,site)
+		if not quote["ok"]: return {}
+		payment=quote["costs"]
+	var occupied := reserved.duplicate()
+	if building_id!=-1:
+		for agent: Dictionary in _state["followers"]:
+			if agent["job"]==building_id: occupied[Vector2i(agent["work_x"],agent["work_z"])]=true
+	if occupied.size()>=int(site["build_capacity"]): return {}
+	var approach := _promised_abode_approach(origin,source_shrine_bounds(site),occupied,site["id"]==_state["opening"]["definition"].get("dock_site_id"))
+	if approach.is_empty(): return {}
+	approach["building_id"]=building_id
+	approach["site_id"]=site["id"]
+	if not payment.is_empty(): approach["payment"]=payment
+	return approach
+
+
+func source_shrine_bounds(site: Dictionary) -> Rect2i:
+	var anchor := Vector2i(site["x"],site["z"])
+	var span := ceili(float(site["nav_size"]))
+	return Rect2i(anchor-Vector2i.ONE*(span/2),Vector2i.ONE*span)
+
+
+func source_clear_footprint(area: Rect2i) -> bool:
+	var ground:=height_at(area.position.x,area.position.y)
+	if ground<=0: return false
+	for z in range(area.position.y,area.end.y):
+		for x in range(area.position.x,area.end.x):
+			if height_at(x,z)!=ground or not can_act_at(x,z) or _occupied(x,z) or not plot_obstruction(x,z).is_empty():
+				return false
+	for site: Dictionary in _state["progression"]["shrines"]:
+		if source_shrine_bounds(site).intersects(area): return false
+	return true
+
+
+func source_shrine_builder_home() -> Variant:
+	var site := source_shrine_site()
+	var best := INF
+	var selected: Variant=null
+	for home: Dictionary in _state["homes"]:
+		var candidate := Opening.release_candidate(_state,int(home["id"]))
+		if candidate.is_empty() or source_shrine_plan(candidate).is_empty(): continue
+		var distance := Vector2(home["x"],home["z"]).distance_squared_to(Vector2(site["x"],site["z"]))
+		if distance<best:
+			best=distance
+			selected=home["id"]
+	return selected
+
+
+func assign_source_shrine(follower: Dictionary,plan: Dictionary) -> void:
+	var site := source_shrine_site(plan["site_id"])
+	var bounds := source_shrine_bounds(site)
+	var id: int=plan["building_id"]
+	var work: Vector2i=plan["target"]
+	if id==-1:
+		for resource: String in plan.get("payment",{}):
+			_state[resource]=int(_state[resource])-int(plan["payment"][resource])
+		id=_state["next_id"]
+		_state["next_id"]+=1
+		_state["homes"].append({"id":id,"kind":"shrine","authored_shrine":true,"shrine_id":site["id"],"model_id":site["model_id"],"rotation":site["rotation"],"x":bounds.position.x,"z":bounds.position.y,"span":bounds.size.x,"capacity":0,"build_capacity":site["build_capacity"],"build_ticks":site["build_ticks"],"progress":0,"temple_work":0.0,"stored":0,"residents":0,"work_x":work.x,"work_z":work.y,"builder":follower["id"],"stalled":false,"access_path":plan["path"].duplicate()})
+		if source_ark_site(site):
+			_state["homes"].back().merge({"ark_crew":{},"capacity":site["build_capacity"],"breed_locked":true},true)
+		site["started"]=true
+		_spatial_revision+=1
+	follower.merge({"job":id,"repair_site":site["id"],"work_x":work.x,"work_z":work.y,"path":plan["path"].duplicate(),"state":"walking"},true)
+
+
+func finish_source_shrine(id: int) -> String:
+	for home: Dictionary in _state["homes"]:
+		if home["id"]!=id or not home.get("authored_shrine",false): continue
+		var site := source_shrine_site(home["shrine_id"])
+		if site.get("repaired",false): return ""
+		site["repaired"]=true
+		_state["progression"]["revision"]+=1
+		for follower: Dictionary in _state["followers"]:
+			if home.get("ark_crew",{}).has(str(follower["id"])):
+				Ark.board(home,follower)
+				continue
+			if follower.get("repair_site")==site["id"]:
+				follower.erase("repair_site")
+				if follower.has("away_home"): follower["entering_home"]=int(follower["away_home"])
+		return site["id"]
+	return ""
+
+
+func dwelling_count() -> int:
+	var count := 0
+	for home: Dictionary in _state["homes"]:
+		if home.get("kind","")=="": count+=1
+	return count
+
+
+func begin_promised_abode(plot: Dictionary,builder_id: int=-1) -> bool:
+	var story: Dictionary=_state["opening"]["definition"]
+	var first: bool=_state["homes"].is_empty()
+	if plot.is_empty() or not story.has("first_abode_model") or (not first and builder_id<0): return false
+	var unlocked := func(key: String) -> bool: return preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],key)
+	var ground := func(x: float,z: float) -> float: return preload("res://simulation/source_terrain.gd").surface_height(source_raw_height_at(x,z))
+	var tent_index := -1
+	for house: Dictionary in story["house_selection"]:
+		if house["id"]=="AbodeType_0_Rank_1": tent_index=int(house["index"]); break
+	var existing: Array=[]
+	for home: Dictionary in _state["homes"]:
+		if home.get("kind","")=="": existing.append({"index":home.get("source_index",tent_index),"owner":0})
+	var random := RandomNumberGenerator.new()
+	random.state=_random.state
+	var request := preload("res://simulation/source_plot_conversion.gd").request(plot,0,0,false,false,existing,story["house_selection"],story["plot_environment"],story["plot_conversion_rules"],unlocked,ground,random.randi)
+	if request.is_empty(): return false
+	var source_id: String=story["house_selection"][request["index"]]["id"]
+	var definition := {"model_id":story["first_abode_model"],"values":story["first_abode_values"]["values"],"name":story["first_abode_values"]["raw"]["House Name"]}
+	if source_id!="AbodeType_0_Rank_1":
+		if not (Opening.supports_timeline_housing(_state["opening"]) or Opening.supports_shrine_housing(_state["opening"]) or Opening.supports_discovery(_state["opening"])): return false
+		if source_id==story["mud_hut"]["source_id"]: definition=story["mud_hut"]
+		elif source_id=="AbodeType_1_Rank_2": definition=story.get("mud_lodge",{})
+		elif source_id.begins_with("StoneHouse_"): definition=story.get("stone_abodes",{}).get(source_id,{})
+		else: definition=story.get("wooden_abodes",{}).get(source_id,{})
+		if definition.is_empty(): return false
+	var wheat:=source_abode_wheat_cost(plot)
+	if wheat>int(_state.get("wheat",0)): return false
+	var values: Dictionary=definition["values"]
+	var center: Array=request["position"]
+	var span := int(values["base size"])
+	var x := floori(float(center[0])-span*0.5+0.5)
+	var z := floori(float(center[1])-span*0.5+0.5)
+	var footprint := Rect2i(x,z,span,span)
+	var routes: Array=[]
+	var reserved := {}
+	var slots := int(story["promised_steps"][2]["build_capacity"] if first else values["build capacity"])
+	for follower: Dictionary in _state["followers"]:
+		if routes.size()>=slots: break
+		if follower["state"]=="indoors" or builder_id>=0 and follower["id"]!=builder_id: continue
+		var start := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
+		var approach := _promised_abode_approach(start,footprint,reserved)
+		if approach.is_empty(): continue
+		reserved[approach["target"]]=true
+		routes.append({"follower":follower,"path":approach["path"],"target":approach["target"]})
+	if routes.is_empty(): return false
+	if not preload("res://simulation/source_plot_conversion.gd").release_plot(_state["source_plots"],int(plot["id"]),true,false): return false
+	if wheat>0: _state["wheat"]-=wheat
+	_random.state=random.state
+	var id: int=_state["next_id"]
+	_state["next_id"]+=1
+	var work: Vector2i=routes[0]["target"]
+	var duration:=Economy.build_ticks(_state,{"build_ticks":roundi(float(values["build time"])/TICK_SECONDS),"rank":definition.get("rank",1)})
+	_state["homes"].append({"id":id,"model_id":definition["model_id"],"name":definition["name"],"family":definition.get("family",2 if definition.has("rank") else 0),"rank":definition.get("rank",1),"source_house":source_id,"source_index":request["index"],"script_abode_type":definition.get("script_type",0),
+		"x":x,"z":z,"anchor_x":center[0],"anchor_z":center[1],"rotation":rad_to_deg(center[3]),"span":span,
+		"capacity":int(values["capacity"]),"build_capacity":slots,"new_builder_contribution":values["new builder contribution"],
+		"vision_radius":values["visionradius"],"belief_modifier":values["belief modifier"],"belief_multiplier":values["belief multiplier per peep in house"],
+		"breeder_count":int(values["breeder count"]),"birth_ticks":roundi(float(values["birth rate"])/TICK_SECONDS),
+		"build_ticks":duration,"progress":0,"stored":0,"residents":0,"min_belief":int(values["min belief"]),"max_belief":int(values["max belief"]),
+		"builder":routes[0]["follower"]["id"],"work_x":work.x,"work_z":work.y,"stalled":false,"access_path":[]})
+	_spatial_revision+=1
+	for route: Dictionary in routes:
+		var follower: Dictionary=route["follower"]
+		var target: Vector2i=route["target"]
+		follower.merge({"job":id,"work_x":target.x,"work_z":target.y,"path":route["path"],"state":"walking","entering_home":id},true)
+		follower.erase("seeking_plot")
+	return true
+
+
+func refresh_source_abode_build_times() -> void:
+	var stats: Array=_state["opening"]["definition"]["house_base_stats"]["rows"]
+	for home: Dictionary in _state["homes"]:
+		if not home.has("source_house") or home["progress"]>=home["build_ticks"]: continue
+		var seconds: float=stats[home["source_index"]]["values"]["build time"]
+		var duration:=Economy.build_ticks(_state,{"build_ticks":roundi(seconds/TICK_SECONDS),"rank":home["rank"]})
+		home["build_ticks"]=duration
+		home["progress"]=mini(int(home["progress"]),duration-1)
+
+
+func source_abode_wheat_cost(plot: Dictionary) -> int:
+	var progression: Dictionary=_state["progression"]
+	var unlocked:=func(key: String) -> bool: return preload("res://simulation/source_unlocks.gd").enabled(progression,key)
+	if not unlocked.call("FoodSpending"): return 0
+	var membership:=func(point: Array) -> int:
+		var owner:=4294967295
+		for settlement: Dictionary in progression["settlements"]:
+			var dx:=float(point[0])-float(settlement["x"])
+			var dz:=float(point[1])-float(settlement["z"])
+			if dx*dx+dz*dz<=float(settlement["radius"])*float(settlement["radius"]): owner=int(settlement["id"])
+		return owner
+	var quote:=preload("res://simulation/source_plot_cost.gd").quote(plot,1,_state["opening"]["definition"],unlocked,membership,dwelling_count())
+	return maxi(0,ceili(quote.get("amount",0.0)))
+
+
+func promised_growth_plots() -> Array:
+	var opening: Dictionary=_state["opening"]
+	var definition: Dictionary=opening["definition"]
+	var site: Dictionary=definition["constants"]["INITIAL_ROCK"]
+	var registry: Dictionary=_state["source_plots"]
+	var plots: Array=[]
+	var expanded := Opening.supports_timeline_housing(opening) or Opening.supports_shrine_housing(opening) or Opening.supports_discovery(opening)
+	var pit := source_shrine_site(definition["discovery_site_id"]) if definition.has("discovery_site_id") else {}
+	var pit_bounds := Rect2i() if pit.is_empty() else source_shrine_bounds(pit)
+	var dock:=source_dock_site()
+	var dock_bounds:=Rect2i() if dock.is_empty() else source_shrine_bounds(dock)
+	var expansion_bounds: Array[Rect2i]=[]
+	for temple: Dictionary in _state["progression"]["shrines"]:
+		if source_land_expansion(temple) or source_ark_site(temple): expansion_bounds.append(source_shrine_bounds(temple))
+	var shrine: Dictionary=definition["constants"]["FIRST_SHRINE"] if definition.has("first_shrine_id") else {}
+	for id: int in registry["active"]:
+		var plot: Dictionary=registry["slots"][id]
+		var footprint := Rect2i(int(plot["x"]),int(plot["z"]),int(plot["size"]),int(plot["size"]))
+		if not pit.is_empty() and pit_bounds.intersects(footprint): continue
+		if not dock.is_empty() and dock_bounds.intersects(footprint): continue
+		if expansion_bounds.any(func(bounds: Rect2i) -> bool: return bounds.intersects(footprint)): continue
+		if not shrine.is_empty() and footprint.has_point(Vector2i(shrine["x"],shrine["y"])): continue
+		if not expanded and not preload("res://simulation/source_plots.gd").intersects_query(Vector2(plot["x"],plot["z"]),int(plot["size"]),Vector2(site["x"],site["y"]),20.0): continue
+		var half := float(plot["size"])*0.5
+		var center := Vector2(plot["x"],plot["z"])+Vector2.ONE*half
+		if can_act_at(center.x,center.y): plots.append(plot)
+	return plots
+
+
+func promised_home_limit() -> int:
+	var opening: Dictionary=_state["opening"]
+	var level: String="timeline_population_card" if Opening.supports_timeline_housing(opening) else "growth_population_card"
+	if Opening.supports_shrine_housing(opening): level="shrine_population_card"
+	return int(opening["definition"][level]["population"])/int(_state["homes"][0]["capacity"])
+
+
+func has_room_for_growth(reserved: int=0) -> bool:
+	return Opening.supports_discovery(_state["opening"]) or dwelling_count()+reserved<promised_home_limit()
+
+
+func promised_plot_reachable(plot: Dictionary,origin: Vector2i) -> bool:
+	var size := int(plot["size"])
+	var footprint := Rect2i(int(plot["x"]),int(plot["z"]),size,size)
+	return not _promised_abode_approach(origin,footprint,{}).is_empty()
+
+
+func growth_plots_from(origin: Vector2) -> Array:
+	var plots := promised_growth_plots()
+	plots.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
+		var distance_a := origin.distance_squared_to(Vector2(a["x"],a["z"])+Vector2.ONE*float(a["size"])*0.5)
+		var distance_b := origin.distance_squared_to(Vector2(b["x"],b["z"])+Vector2.ONE*float(b["size"])*0.5)
+		return a["id"]<b["id"] if distance_a==distance_b else distance_a<distance_b)
+	return plots
+
+
+func start_growth_construction() -> Array:
+	var ids: Array=[]
+	if _state["homes"].is_empty(): return ids
+	for follower: Dictionary in _state["followers"]:
+		if not has_room_for_growth(): break
+		if not follower.get("seeking_plot",false): continue
+		var origin := Vector2(follower["x"],follower["z"])
+		for plot: Dictionary in growth_plots_from(origin):
+			if begin_promised_abode(plot,int(follower["id"])):
+				ids.append(_state["homes"].back()["id"])
+				break
+	return ids
+
+
+func _promised_abode_approach(start: Vector2i,footprint: Rect2i,reserved: Dictionary,avoid_footprint: bool=false) -> Dictionary:
+	var best := {}
+	for offset in range(footprint.size.x):
+		for target: Vector2i in [Vector2i(footprint.position.x-1,footprint.position.y+offset),Vector2i(footprint.end.x,footprint.position.y+offset),Vector2i(footprint.position.x+offset,footprint.position.y-1),Vector2i(footprint.position.x+offset,footprint.end.y)]:
+			if reserved.has(target) or height_at(target.x,target.y)<=0 or _occupied(target.x,target.y): continue
+			var route := _route(start,target,-1,footprint) if avoid_footprint else _route(start,target)
+			if start!=target and route.is_empty() or not best.is_empty() and route.size()>=best["path"].size(): continue
+			var enters := false
+			var outside := not footprint.has_point(start)
+			for cell: int in route:
+				if footprint.has_point(Vector2i(cell%int(_state["width"]),cell/int(_state["width"]))):
+					if outside: enters=true; break
+				else: outside=true
+			if not enters: best={"target":target,"path":route}
+	return best
+
+
+func advance_promised_abode(wait_to_enter: bool=false) -> Array:
+	var events: Array=[]
+	var construction := {}
+	for home: Dictionary in _state["homes"]:
+		if home["progress"]<home["build_ticks"]: construction[home["id"]]=true
+	for follower: Dictionary in _state["followers"]:
+		if not construction.has(follower["job"]): continue
+		var work := Vector2i(follower["work_x"],follower["work_z"])
+		finish_promised_approach(follower,work)
+		_update_agent(follower,false)
+	if not construction.is_empty(): _advance_construction()
+	var use_assigned_entrance: bool=Opening.supports_growth(_state["opening"]) or Opening.supports_timeline_housing(_state["opening"]) or _state["opening"]["phase"] in ["shrine","discovery"]
+	var fallback: int=-1 if use_assigned_entrance else _state["homes"].back()["id"]
+	for home: Dictionary in _state["homes"]:
+		if home["progress"]<home["build_ticks"]: continue
+		if construction.has(home["id"]):
+			events.append({"hook":"onAbodeComplete","id":home["id"]})
+			continue
+		if wait_to_enter: continue
+		var entrance := Vector2i(home["work_x"],home["work_z"])
+		for follower: Dictionary in _state["followers"]:
+			if follower["state"]=="indoors" or follower.get("entering_home",fallback)!=home["id"] or home["residents"]>=home["capacity"]: continue
+			var position := Vector2(follower["x"],follower["z"])
+			if position.distance_to(Vector2(entrance))<0.01:
+				follower["state"]="indoors"
+				follower["indoors_home"]=home["id"]
+				follower.erase("entering_home")
+				follower.erase("away_home")
+				follower["path"]=[]
+				home["residents"]+=1
+				events.append({"hook":"onEnterHouse","id":follower["id"]})
+			else:
+				if follower["path"].is_empty(): follower["path"]=_route(Vector2i(position.round()),entrance)
+				finish_promised_approach(follower,entrance)
+				if not follower["path"].is_empty(): _update_agent(follower,false)
+	return events
+
+
+func finish_promised_approach(follower: Dictionary,target: Vector2i) -> void:
+	# Sculpting clears routes mid-stride. A route to the rounded current cell
+	# is empty even when the follower still needs to reach its exact waypoint.
+	if not follower["path"].is_empty(): return
+	var position := Vector2(follower["x"],follower["z"])
+	if Vector2i(position.round())==target and position.distance_to(Vector2(target))>=0.01:
+		follower["path"].append(target.y*int(_state["width"])+target.x)
+
+
+func advance_promised_breeding() -> void:
+	var away := {}
+	for follower: Dictionary in _state["followers"]:
+		if follower.has("away_home"):
+			var home_id := int(follower["away_home"])
+			away[home_id]=int(away.get(home_id,0))+1
+	for home: Dictionary in _state["homes"]:
+		if home["progress"]<home["build_ticks"] or home["residents"]<=0 or home["residents"]+int(away.get(home["id"],0))>=home["capacity"] or home.get("breed_locked",false): continue
+		var elapsed := int(home.get("breed_ticks",0))+1
+		home["breed_ticks"]=elapsed
+		if elapsed<preload("res://simulation/building_stats.gd").authored_birth_interval(_state,home): continue
+		var follower := _agent(home["work_x"],home["work_z"],false)
+		follower["state"]="indoors"
+		follower["indoors_home"]=home["id"]
+		_state["followers"].append(follower)
+		home["residents"]+=1
+		home["breed_ticks"]=0
 
 
 func house_spec(rank: int = -1) -> Dictionary:
@@ -1541,7 +2809,56 @@ func _give_progression_card(id: String) -> void:
 		_recover_agents()
 
 
-func _apply_progression(command: Dictionary, events: Array) -> void:
+func _advance_land_effects(events: Array) -> void:
+	var progression_rules: Dictionary=_state.get("progression",{}).get("rules",{})
+	var rules: Dictionary=progression_rules.get("beautify_rules",{})
+	if not rules.has("timer"):
+		return
+	if not _state.has("source_influence") and not _state.has("map_fields"):
+		_state["map_fields"]=SourceRaster.initial()
+	var raster: Dictionary=_state.get("source_influence",{}).get("raster",_state.get("map_fields",{}))
+	var now := int(_state["tick"])*roundi(TICK_SECONDS*1000.0)
+	var interval := Beautify.timer_interval(rules,progression_rules["config"])
+	var cells := LandEffectTimer.advance(raster,now,interval,-1.0,rules["timer"])
+	if not cells.is_empty():
+		if _state.has("map_fields"): AbodeBeauty.refresh_expired(_state,cells)
+		events.append({"type":"land_effect_expired","cells":cells})
+
+
+func _beautify_ground(x: int,z: int) -> float:
+	if x<0 or z<0 or x>=int(_state["width"]) or z>=int(_state["width"]):
+		return -1.0
+	if _state.has("opening"):
+		return float(source_raw_height_at(x,z))
+	return float(height_at(x,z)+19)
+
+
+func _inspect_beautify(command: Dictionary,result: Dictionary) -> Dictionary:
+	var p: Dictionary=_state["progression"]
+	var rules: Dictionary=p["rules"].get("beautify_rules",{})
+	if rules.is_empty():
+		return result
+	var raster: Dictionary=_state.get("source_influence",{}).get("raster",_state.get("map_fields",{"fields":{}}))
+	var plan := Beautify.quote(raster,float(command["x"]),float(command["z"]),rules,p["rules"]["config"],_beautify_ground)
+	if plan.is_empty():
+		return {"ok":false,"cost":0,"reason":""}
+	var arm_cost := int(result["cost"])
+	var charge := float(plan["charge"])
+	var remainder := float(p.get("beautify_cost_remainder",0.0))
+	if charge>0.0:
+		var total := Beautify.Terrain.f32(charge+remainder)
+		var debit := int(total)
+		var available := int(_state["belief"])-arm_cost
+		if available<debit or (debit==0 and float(available)<total):
+			return {"ok":false,"cost":arm_cost+debit,"reason":""}
+		result["cost"]=arm_cost+debit
+		remainder=Beautify.Terrain.f32(total-debit)
+	plan["remainder"]=remainder
+	result["beautify"]=plan
+	return result
+
+
+func _apply_progression(command: Dictionary, events: Array,result: Dictionary) -> void:
 	var p: Dictionary = _state["progression"]
 	match command["type"]:
 		"open_chest":
@@ -1579,7 +2896,18 @@ func _apply_progression(command: Dictionary, events: Array) -> void:
 			if power=="GodPower_Totem": p["totem"]={"x":int(command["x"]),"z":int(command["z"]),"active":true}
 			elif power=="GodPower_TotemActivate": p["totem"]["active"]=not p["totem"].get("active",false)
 			elif power=="GodPower_Beautify":
-				p["beautified"].append({"x":int(command["x"]),"z":int(command["z"]),"until":_state["tick"]+roundi(float(p["rules"]["config"].get("BeautifyLength",8))/TICK_SECONDS),"radius":float(p["rules"]["config"].get("BEAUTIFY_RADIUS",1.5))})
+				if result.has("beautify"):
+					if not _state.has("source_influence") and not _state.has("map_fields"):
+						_state["map_fields"]=SourceRaster.initial()
+					var raster: Dictionary=_state.get("source_influence",{}).get("raster",_state.get("map_fields",{}))
+					var changed: Array=[]
+					Beautify.apply(raster,result["beautify"],p["rules"]["beautify_rules"],_beautify_ground,changed)
+					p["beautify_cost_remainder"]=result["beautify"]["remainder"]
+					for item: Array in changed:
+						if item[0]=="refresh":
+							var area := item.slice(1)
+							AbodeBeauty.refresh(_state,_state["homes"],area)
+							events.append({"type":"beautify_terrain","area":area})
 			elif power=="GodPower_FingerOfGod":
 				for home: Dictionary in _state["homes"].duplicate():
 					if home.get("kind","")=="shrine" or command.has("home_id") and int(command["home_id"])!=int(home["id"]): continue
@@ -1603,6 +2931,14 @@ func _apply_progression(command: Dictionary, events: Array) -> void:
 						follower["wait"]=0
 
 
+func install_weyworld_tutorial(rules: Dictionary) -> void:
+	if rules.is_empty() or _state.has("weyworld"): return
+	var updated: Dictionary=_state["progression"]["rules"].duplicate(true)
+	updated["weyworld"]=rules.duplicate(true)
+	_state["progression"]["rules"]=Immutable.freeze(updated)
+	Weyworld.initialize(self,_state)
+
+
 func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 	_plan_stamp=-1
 	_house_specs.clear()
@@ -1621,7 +2957,7 @@ func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 		for previous: Dictionary in old.get("rules",{}).get("shrines",[]):
 			if previous["id"]==site["id"] and previous.has("build_ticks"): site["build_ticks"]=previous["build_ticks"]
 	var updated := Progression.initialize(merged,_state["terrain"],int(_state["width"]))
-	for field in ["discovered","completed","inventory","max_rank","abode_type","totem_capacity","totem","beautified","first_card_tick","age","last_reward","revision","rock_taps","rock_revision","active_powers","player_level","research","assigned_resources","settlements","reward_history","happiness","supply_next_tick","supply_serial"]:
+	for field in ["discovered","completed","inventory","max_rank","abode_type","totem_capacity","totem","beautify_cost_remainder","first_card_tick","age","last_reward","revision","rock_taps","rock_revision","active_powers","player_level","research","assigned_resources","settlements","reward_history","happiness","supply_next_tick","supply_serial"]:
 		if old.has(field): updated[field]=old[field]
 	updated["prior_research"]=old.get("prior_research",{}).duplicate(true)
 	if old.get("rules",{}).get("research_scope","initialworldsetup")!=merged.get("research_scope","initialworldsetup") and not updated["research"].is_empty():
@@ -1670,6 +3006,7 @@ func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 					shrine["z"]=previous["z"]
 	_state["progression"]=updated
 	Immutable.freeze(_state["progression"]["rules"])
+	Weyworld.initialize(self,_state)
 	var footprint_changed := false
 	for home: Dictionary in _state["homes"]:
 		if home.get("kind","")=="shrine":
@@ -1703,6 +3040,7 @@ func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 	if footprint_changed:
 		_spatial_revision+=1
 		_recover_agents()
+	AbodeBeauty.refresh(_state,_state["homes"])
 	Progression.refresh(_state)
 	Influence.refresh(_state)
 
@@ -1710,10 +3048,12 @@ func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 func plan_worker(id: int) -> Dictionary:
 	var item := Economy.settlement(_state,id)
 	if item.is_empty(): return {"ok":false,"cost":0,"reason":""}
-	var available := false
+	var available: Array=[]
 	for agent: Dictionary in _state["followers"]:
-		if Economy.worker_available(_state,agent,item): available=true; break
-	if not available: return {"ok":false,"cost":0,"reason":""}
+		if Economy.worker_available(_state,agent,item): available.append(agent)
+	if available.is_empty(): return {"ok":false,"cost":0,"reason":""}
+	var existing := Economy.plan_existing_plot(self,_state,item,available)
+	if not existing.is_empty(): return existing
 	var radius := ceili(float(item["radius"]))
 	# Larger source fields become viable when the player clears enough space.
 	# Test each footprint, affordability and route through the same command gate.
@@ -1728,6 +3068,18 @@ func plan_worker(id: int) -> Dictionary:
 						result["plot_command"]=command
 						return result
 	return {"ok":false,"cost":0,"reason":""}
+
+
+func deploy_source_worker(plan: Dictionary,events: Array) -> void:
+	if plan.has("field"):
+		Farming.staff_field(_state,plan)
+		return
+	var field_id:=Farming.start_field(self,_state,plan)
+	if field_id<0 or plan["field_spec"]["kind"]!="farm": return
+	var intro:=Opening.new()
+	intro.configure(self,_state,events)
+	intro.farming_hook("onFollowerSprogged",[plan["worker"]])
+	intro.farming_hook("onAbodeBuilding",[field_id])
 
 
 func _prepare_plan_reservations() -> void:
@@ -1837,6 +3189,7 @@ func reconfigure(changes: Array) -> Dictionary:
 					if value==0: rules["cards"][id]["requirements"].erase(resource)
 					else: rules["cards"][id]["requirements"][resource]=int(value)
 			"shrine":
+				if change.has("registered_scope") and change["registered_scope"]!=rules.get("registered_scope",""): continue
 				if value<=0 or value>31536000: return {"ok":false,"message":"Shrine repair time must be positive."}
 				var found := false
 				for shrine: Dictionary in rules["shrines"]:
@@ -1865,6 +3218,7 @@ func reconfigure(changes: Array) -> Dictionary:
 	_state["progression"]["revision"]+=1
 	_state["progression"]["totem_capacity"]=int(rules["config"].get("InitialTotemCapacity",4))+(5 if "Card_TotemCapacity" in _state["progression"]["completed"] else 0)
 	for home: Dictionary in _state["homes"]:
+		if home.get("kind","")=="ark": continue
 		var duration: int = home.get("build_ticks",_state.get("build_ticks",BUILD_TICKS))
 		var fraction := float(home["progress"])/duration
 		if home.get("kind","")=="shrine":
@@ -1889,6 +3243,7 @@ func reconfigure(changes: Array) -> Dictionary:
 			home["progress"]=mini(int(home["build_ticks"]),floori(work_ticks))
 			home["work_accumulator"]=0.0 if home["progress"]>=int(home["build_ticks"]) else work_ticks-floorf(work_ticks)
 		else: home["progress"]=mini(int(home["build_ticks"]),roundi(fraction*int(home["build_ticks"])))
+	AbodeBeauty.refresh(_state,_state["homes"])
 	for shrine: Dictionary in _state["progression"]["shrines"]:
 		for source: Dictionary in rules["shrines"]:
 			if shrine["id"]==source["id"]: shrine["build_ticks"]=source["build_ticks"]
@@ -1899,6 +3254,7 @@ func reconfigure(changes: Array) -> Dictionary:
 		agent["scale"]=float(stats.get("Scale",1))
 	Progression.refresh(_state)
 	Influence.refresh(_state)
+	if influence_changed and rules.has("registered_scope"): Economy.fill_free_harvest(_state)
 	_plan_stamp=-1
 	return {"ok":true,"message":"Applied %d constants. Existing plot footprints are preserved; new plots use the new sizes." % changes.size()}
 

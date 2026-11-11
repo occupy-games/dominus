@@ -6,6 +6,7 @@ from pathlib import Path
 import struct
 
 from tools.original_assets import iw_hash, resource_group
+from tools.native_scenery_oracle import NativeImage
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +25,23 @@ def decode_shader(payload):
     if len(result['parameters']) < 4: raise ValueError('Missing shader parameters')
     result['parameter_count'], = struct.unpack_from('<I', result['parameters'])
     return result
+
+
+def terrain_beautify_texture(source):
+    image = NativeImage((source / 'godus.s86').read_bytes())
+    binding_address = 0x101a2fd7
+    record_address = 0x105e3fb0
+    binding = image.read(binding_address, 14)
+    name, _, _, _, _, _, texture = struct.unpack('<7I', image.read(record_address, 28))
+    relative_call, = struct.unpack_from('<i', binding, 10)
+    if (binding[:10] != b'\x8b\x15' + struct.pack('<I', texture) + b'\x6a\x03\x52\xe8'
+            or binding_address + len(binding) + relative_call != 0x1017b2f0):
+        raise ValueError('Unexpected terrain sampler 3 binding')
+    path = image.read(name, 64).split(b'\0', 1)[0].decode()
+    if path != 'sprites/GemDiffuse.tga':
+        raise ValueError('Unexpected terrain sampler 3 texture')
+    return {'source': path, 'sha256': hashlib.sha256((source / path).read_bytes()).hexdigest(), 'sampler': 3,
+            'binding': hex(binding_address), 'texture_record': hex(record_address)}
 
 
 def extract(source=ROOT / 'data/godus2_4', output=ROOT / 'game/assets/original/shaders'):
@@ -48,11 +66,16 @@ def extract(source=ROOT / 'data/godus2_4', output=ROOT / 'game/assets/original/s
                     entry[stage] = {'path': path.relative_to(output).as_posix(), 'sha256': hashlib.sha256(value).hexdigest()}
                 records.append(entry)
     crop = next(record for record in records if record['source'] == 'shaders.group.bin' and record['name'] == 'shdrCropsGrain')
+    terrain = next(record for record in records if record['source'] == 'hiend_high_shaders.group.bin' and record['name'] == 'shdrTerrain50')
     result = {'version': 1, 'name_source': 'GeneratedDataFiles/Shaders.csv',
               'name_source_sha256': hashlib.sha256(names_file.read_bytes()).hexdigest(), 'shaders': records,
               'runtime_ports': [{'path': 'res://presentation/world/godus_crops.gdshader',
                                 'source': crop['source'], 'resource_id': crop['resource_id'], 'member_sha256': crop['member_sha256'],
-                                'scope': 'Healthy crop tint mask, original grain/pumpkin colors, ripeness curve and direct diffuse/ambient lighting. Blight, beautify, fog and source vertex deformation remain unported.'}]}
+                                'scope': 'Healthy crop tint mask, original grain/pumpkin colors, ripeness curve and direct diffuse/ambient lighting. Blight, beautify, fog and source vertex deformation remain unported.'},
+                               {'path': 'res://presentation/world/source_land.gdshader', 'source': terrain['source'],
+                                'resource_id': terrain['resource_id'], 'member_sha256': terrain['member_sha256'],
+                                'textures': [terrain_beautify_texture(source)],
+                                'scope': 'Beautify mask, moving UVs, normal weighting, saturation and highlight over the smooth campaign palette.'}]}
     (output / 'catalog.json').write_text(json.dumps(result, indent=2) + '\n')
     return result
 

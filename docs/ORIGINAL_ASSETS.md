@@ -86,6 +86,47 @@ links. Exact marker times come from `VFX/Scripts/anim`; hammer-ground strikes at
 game-state switches remain unresolved. Scrubbing is silent; pause and the SFX
 setting also stop animation cues.
 
+Beautify uses the PCM loop targeted by its original Play and Stop events.
+Both platform banks agree on the sound, its source gain, and the linear
+500 ms and 2200 ms transitions. The game keeps one active voice while validated
+brush samples arrive and lets a released voice fade. The renderer bridges
+fixed-tick delivery with a short contact timeout.
+[Wwise v88 parser](https://raw.githubusercontent.com/bnnm/wwiser/master/wwiser/parser/wparser.py)
+[Wwise v88 property IDs](https://raw.githubusercontent.com/bnnm/wwiser/master/wwiser/parser/wdefs.py)
+
+`tools/beautify_particles.py` follows the executable's brush registration to
+`GOD_Beautify.txt` and the selected `Beautify` scene in `GodPowers.ptc`. The
+manifest records three emitters, six atlas frames and 84 curves. The offline
+comparison runs the original emitter loader with an in-memory byte reader and
+checks the authored keys and compiled scalar tables. The portable compiler
+reproduces the native two-point linear intervals, 30-point cubic intervals and
+scalar unit conversions. The original evaluator agrees at 1,530 sampled
+positions across the primary and secondary curves, and the 24,090 scalar values
+cached by the original emitter agree byte for byte. The packed color keys use
+hue in degrees and byte-valued saturation and value. The original converts each
+key to RGB with x87 truncation and then interpolates its channels. All 1,503
+packed colors and 69 unblended renderer lookups match the original, including
+samples on both sides of the 100-percent wrap. The draw routine computes age
+from remaining lifetime and uses it to index the opacity curve independently
+of the optional RGB phase offset. The emitter opacity is multiplied by the
+particle's opacity and by the effect opacity, which can inherit a parent
+multiplier. The native draw comparisons cover 357 packed colors across the
+three emitters. They include alpha-zero culling and saturation at 255.
+
+The native scene replay loads the three child effects from the selected group
+and executes their original initialization and update routines. It records
+births, local positions, lifetime, size, rotation and frame for a stationary
+brush. Sparkle emits on the initial update and the RainbowBlurs emitter uses all
+four atlas frames during the replay. The release stops new births while existing
+particles keep moving and expire on their own clocks. The replay uses in-memory
+allocation and an identity callback for the uninitialized transform slot.
+Godot's presentation scheduler advances the authored 30 Hz birth clock,
+samples the two original rate lanes, and carries fractional births across
+updates. It matches 78 native samples across integer and fractional frame
+times. The check supplies the captured random state after each birth batch
+until Godot can run the particle birth and motion code itself. Live brush
+movement and particle drawing still need integration.
+
 The supported multipart text reader preserves shared coordinates for the
 Christmas tree. Binary building assemblies use the recovered Locator coordinates
 described below. Missing transforms or behaviors are not invented. Format research included
@@ -151,17 +192,23 @@ pack is tested against the previously recovered loose height grid.
 
 Homeworld7's packed p1Start is empty; its supplied `stream/homeworld7/p1start`
 record places two followers on dry original terrain at (85,242) and (87,242).
-This revision pairing is recorded explicitly. Homeworld6 has no supplied player
-start. Twelve large event-map packs are inventoried but unavailable because
-their original rules and waterlines are not yet ported and validated. Source names remain
-literal: the presence of Weyworld art does not establish which terrain pack
-should be renamed Weyworld.
+This revision pairing is recorded explicitly. The current archive's
+`homeworldver.csv` selects version 7 for Weyworld. New Homeworld7 starts use the
+matching research, initial currencies, 71 chest sites, 34 temple sites, and
+authored influence coordinates. Beacon completion activates the corresponding
+source influence gates. The direct map start keeps the supplied dry followers
+and loads the original empty Ark abode, two scripted followers and free farms
+and mines from `initialworldsetup7/scripts.lua`. The Ark uses the `arkabode`
+assembly from the capacity row in `balance/housevalues.csv`. Homeworld departure,
+Ark passengers and the Astari portion of the setup remain to be integrated.
+Homeworld6 has no supplied packed player start. Twelve large event-map packs
+are inventoried but unavailable because their rules and waterlines still need
+porting and validation.
 
-The enabled maps currently share the supported legacy desktop opening rules
-and its explicit start-relative registration. These are playable scenarios on
-source maps, not recovered full map-specific campaigns. Map IDs and height
-fingerprints persist in simulation state. Presentation and save migrations
-resolve source fields by that ID instead of always looking up Homeworld.
+The other enabled maps share the supported legacy desktop opening with
+start-relative registration. Map IDs and height fingerprints persist in
+simulation state. Homeworld7 saves from before Weyworld registration retain
+their existing site layout and progress.
 
 `tools/campaign.py` recovers the 64 Homeworld terrain chunks with the source
 loader's Simple9, sparse and raw formats, preserving hashes and decoder-address

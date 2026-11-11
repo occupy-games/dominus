@@ -18,6 +18,8 @@ static func record(stats: Dictionary) -> Dictionary:
 	elif stats.get("entity")=="settlement": key="Settlement_"+str(stats["role"]).capitalize()
 	elif stats.get("kind","")=="shrine": key="Shrine_LandExpansion" if stats.get("reward_card","")=="Card_Expansion" else "Shrine_GodPower"
 	elif stats.get("kind","") in ["farm","mine"]: key="%s_Rank_%d"%[str(stats["kind"]).capitalize(),int(stats.get("rank",1))]
+	elif stats.get("kind","")=="ark": key="AbodeType_1_Rank_4"
+	elif records.has(stats.get("source_house","")): key=stats["source_house"]
 	elif stats.get("kind","")=="":
 		# Legacy campaigns retain their original house names. Resolve those names
 		# against the supplied current table; never substitute unrelated artwork.

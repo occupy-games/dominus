@@ -6,6 +6,7 @@ var detail := false
 signal resource_dragged(resource: String,active: bool)
 var resource_id := ""
 var resource_count := 0
+var resource_drag_enabled := true
 var accept_resource: Callable
 var assign_resource: Callable
 var progress := -1.0
@@ -82,7 +83,7 @@ func restore_progress() -> void:
 
 
 func _get_drag_data(_position: Vector2) -> Variant:
-	if resource_id.is_empty() or resource_count<=0: return null
+	if not resource_drag_enabled or resource_id.is_empty() or resource_count<=0: return null
 	var preview := TextureRect.new()
 	preview.texture=texture_normal
 	preview.expand_mode=TextureRect.EXPAND_IGNORE_SIZE

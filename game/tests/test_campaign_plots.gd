@@ -51,7 +51,7 @@ func run() -> void:
 	var plots := near_first_plot(world)
 	check(plots.size()==1 and int(plots[0]["x"])==158 and int(plots[0]["z"])==120 and int(plots[0]["size"])==4,"The real campaign must allocate the source-observed first tent plot")
 	check(Registry.valid(world._state["source_plots"]),"Played allocation must retain pool, ownership and scheduler invariants")
-	check(world._state["homes"].is_empty() and not world._state["opening"]["handoff"]["available"],"Allocating plots must not fabricate unported follower construction")
+	check(world._state["homes"].is_empty() and world._state["opening"]["handoff"]["available"],"The original plot tip must hold construction until acknowledgement")
 	if plots.is_empty():
 		print("Original campaign plot integration: %d failures"%failures)
 		quit(1)

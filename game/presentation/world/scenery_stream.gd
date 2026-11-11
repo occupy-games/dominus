@@ -152,6 +152,8 @@ func build_tile(key: Vector2i) -> void:
 	var groups := {}
 	var angles := {}
 	var point_cells := {}
+	var tree_min := Vector3.INF
+	var tree_max := -Vector3.INF
 	forget_rock_tile(key)
 	forget_tree_tile(key)
 	for item: Variant in index[key]:
@@ -163,13 +165,11 @@ func build_tile(key: Vector2i) -> void:
 		if rock_mode and not authored_rocks.has(cell):
 			if state.has("rock_heights") and state["terrain"][cell]!=state["rock_heights"][cell]: continue
 			if int(state["progression"]["rock_taps"].get(str(cell),0))>=int(state["progression"]["rules"]["config"].get("tapsToDestroyRock",2)): continue
-		var variant: int=(int(state["rocks"][cell])-1)%choices.size() if rock_mode else posmod(int(item["variant"]),legacy_variant_count)
+		var variant: int=(int(state["rocks"][cell])-1)%choices.size() if rock_mode else tree_variant(item)
 		var point := Vector3(cell%width-center,int(state["terrain"][cell])*0.3,cell/width-center)
 		if source_tree:
-			variant=int(model_choices.get(item["model_id"],-1))
 			if variant<0: continue
-			var displacement := 0.0 if state.has("tree_response") else (int(state["terrain"][cell])-int(item["anchor_height"]))*0.3
-			point=Vector3(float(item["x"])-center,float(item["source_y"])+displacement,float(item["z"])-center)
+			point=tree_position(item,cell)
 			angles[point]=float(item["rotation"])
 			point_cells[point]=cell
 		if rock_mode and authored_rocks.has(cell):
@@ -186,10 +186,14 @@ func build_tile(key: Vector2i) -> void:
 			angles[point]=float(rock["rotation"]) if rock.has("source_y") else deg_to_rad(float(rock["rotation"]))
 			point_cells[point]=cell
 		if rock_mode and lod>=2: continue # Visible rock tops are subpixel at this scale.
+		if not rock_mode:
+			tree_min=tree_min.min(point)
+			tree_max=tree_max.max(point)
 		if not groups.has(variant): groups[variant]=[]
 		groups[variant].append(point)
 	var root := Node3D.new()
 	root.set_meta("generation",generation)
+	var variants := groups.keys()
 	if not rock_mode and lod>=1 and not imposters.is_empty():
 		var sprites := {}
 		for variant: int in groups.keys():
@@ -242,11 +246,69 @@ func build_tile(key: Vector2i) -> void:
 				if point_cells.has(point):
 					var transform := Transform3D(Basis(Vector3.UP,float(angles.get(point,0.0))).scaled(Vector3.ONE*0.003),point)
 					rock_instances[int(point_cells[point])]={"multi":multi,"node":node,"index":i,"tile":key,"height":point.y,"transform":transform}
+	if not rock_mode and not variants.is_empty():
+		var radius := 0.0
+		for variant: int in variants:
+			var bounds: AABB=templates[variant].mesh.get_aabb()
+			radius=maxf(radius,bounds.position.abs().max(bounds.end.abs()).length()*0.003)
+		if state.has("tree_response"):
+			var config: Dictionary=state["opening"]["definition"]["tree_response_config"]
+			radius*=maxf(TreeAnimation.scale_at(config,true,0.0,0.0),float(config["vertical_scale"]))
+		root.set_meta("pick_bounds",AABB(tree_min,tree_max-tree_min).grow(radius))
 	if tiles.has(key): tiles[key].queue_free()
 	tiles[key]=root
 	vegetation_tiles.erase(key)
 	add_child(root)
 	builds+=1
+
+
+func tree_variant(tree: Dictionary) -> int:
+	if tree.has("source_y"): return int(model_choices.get(tree["model_id"],-1))
+	return posmod(int(tree["variant"]),legacy_variant_count) if legacy_variant_count>0 else -1
+
+
+func tree_position(tree: Dictionary,cell: int) -> Vector3:
+	var center := (int(state["width"])-1)*0.5
+	if tree.has("source_y"):
+		var displacement := 0.0 if state.has("tree_response") else (int(state["terrain"][cell])-int(tree["anchor_height"]))*0.3
+		return Vector3(float(tree["x"])-center,float(tree["source_y"])+displacement,float(tree["z"])-center)
+	return Vector3(int(tree["x"])-center,int(state["terrain"][cell])*0.3,int(tree["z"])-center)
+
+
+func tree_ray_distance(tree: Dictionary,cell: int,origin: Vector3,direction: Vector3) -> float:
+	var tile := Vector2i(int(tree["x"])/TILE,int(tree["z"])/TILE)
+	if not tiles.has(tile) or not tiles[tile].visible or blocked.has(cell): return INF
+	var variant := tree_variant(tree)
+	if not templates.has(variant): return INF
+	var transform := Transform3D(Basis(Vector3.UP,float(tree.get("rotation",0.0))).scaled(Vector3.ONE*0.003),tree_position(tree,cell))
+	if tree_instances.has(cell):
+		var instance: Dictionary=tree_instances[cell]
+		var scale_: float=instance.get("scale",1.0)
+		if scale_<=0.0: return INF
+		transform.basis=transform.basis.scaled(Vector3.ONE*scale_)
+	var inverse := transform.affine_inverse()
+	var hit: Variant=templates[variant].mesh.get_aabb().intersects_ray(inverse*origin,inverse.basis*direction)
+	return origin.distance_to(transform*hit) if hit!=null else INF
+
+
+func pick_tree(origin: Vector3,direction: Vector3,closest: float) -> int:
+	var picked := -1
+	var width: int=state.get("width",0)
+	var responses: Dictionary=state.get("tree_response",{}).get("entries",{})
+	for key: Vector2i in tiles:
+		var tile: Node3D=tiles[key]
+		if not tile.visible: continue
+		var bounds: AABB=tile.get_meta("pick_bounds",AABB())
+		if not bounds.has_volume() or bounds.intersects_segment(origin,origin+direction*closest)==null: continue
+		for tree: Dictionary in index[key]:
+			var cell := int(tree.get("cell",int(tree["z"])*width+int(tree["x"])))
+			if removed_trees.has(str(cell)) or not responses.get(str(cell),{}).get("enabled",true): continue
+			if int(state["terrain"][cell])<=0 and not (tree.has("source_y") and (tree["anchor_height"]==0 or state.has("tree_response"))): continue
+			var distance := tree_ray_distance(tree,cell,origin,direction)
+			if distance>=closest: continue
+			closest=distance
+			picked=cell
+	return picked
 
 
 func motion_height(cell: int,fallback: float) -> float:

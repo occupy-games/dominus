@@ -71,16 +71,22 @@ static func advance(state: Dictionary,rules: Dictionary,phase_rules: Dictionary,
 	return true
 
 
-static func advance_repair(state: Dictionary,rules: Dictionary,phase_rules: Dictionary,footprint_rules: Dictionary,repair_rules: Dictionary,totals: Dictionary,delta: float,mode: int,player: int,raw_ground: Callable,world_ground: Callable,service: Callable) -> Dictionary:
-	var rejected := {"ok":false,"completed":false}
-	if not Repair.valid(state) or not Repair.valid_rules(repair_rules) or not Numbers.integer_between(player,0,4294967295): return rejected
+static func valid_repair_inputs(state: Dictionary,rules: Dictionary,phase_rules: Dictionary,footprint_rules: Dictionary,repair_rules: Dictionary,totals: Dictionary,delta: float,player: int,raw_ground: Callable,world_ground: Callable,service: Callable) -> bool:
+	if not valid(state) or not valid_rules(rules) or not Phase.valid_rules(phase_rules) or not Footprint.valid_rules(footprint_rules): return false
+	if not Repair.valid(state) or not Repair.valid_rules(repair_rules) or not Numbers.integer_between(player,0,4294967295): return false
 	# Both earlier ports name the same native +0x3c4 slot. They must never
 	# become two independently editable facts in the composed state.
-	if int(state["start_block"])!=int(state.get("transition_mode",-1)): return rejected
+	if int(state["start_block"])!=int(state.get("transition_mode",-1)): return false
 	for key: String in ["workers","contributors"]:
-		if not Numbers.integer_between(totals.get(key),0,4294967295): return rejected
+		if not Numbers.integer_between(totals.get(key),0,4294967295): return false
 	var skill: Variant=totals.get("skill_sum")
-	if not (skill is int or skill is float) or not is_finite(float(skill)): return rejected
+	if not (skill is int or skill is float) or not is_finite(float(skill)): return false
+	return is_finite(delta) and delta>=0 and is_finite(Terrain.f32(delta)) and raw_ground.is_valid() and world_ground.is_valid() and service.is_valid()
+
+
+static func advance_repair(state: Dictionary,rules: Dictionary,phase_rules: Dictionary,footprint_rules: Dictionary,repair_rules: Dictionary,totals: Dictionary,delta: float,mode: int,player: int,raw_ground: Callable,world_ground: Callable,service: Callable) -> Dictionary:
+	var rejected := {"ok":false,"completed":false}
+	if not valid_repair_inputs(state,rules,phase_rules,footprint_rules,repair_rules,totals,delta,player,raw_ground,world_ground,service): return rejected
 	if not advance(state,rules,phase_rules,footprint_rules,int(totals["workers"]),delta,raw_ground,world_ground,service): return rejected
 	var context := RepairContext.new()
 	context.state=state

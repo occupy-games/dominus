@@ -5,6 +5,7 @@ const STEP := 0.3
 const TILE := 64
 const Ground = preload("res://presentation/world/exhibit_ground.gd")
 const Geometry = preload("res://presentation/world/terrain_geometry.gd")
+const LandEffectTexture = preload("res://presentation/world/land_effect_texture.gd")
 var colors: Array[Color] = []
 var detail_texture: Texture2D
 var view_region := Rect2i()
@@ -23,6 +24,44 @@ var shared_material: ShaderMaterial
 var hazard_material: ShaderMaterial
 var hazard_texture: ImageTexture
 var hazard_revision := -1
+var land_effect_fields: Array = []
+var land_effect_width := 0
+var land_effect_texture: ImageTexture
+
+
+func terrain_material() -> ShaderMaterial:
+	if shared_material==null:
+		shared_material=Ground.terrain_material()
+	return shared_material
+
+
+func apply_land_effects(state: Dictionary) -> void:
+	var width := int(state["width"])
+	var fields := LandEffectTexture.fields_for(state)
+	if width==land_effect_width and fields==land_effect_fields:
+		return
+	land_effect_width=width
+	land_effect_fields=fields
+	var image := LandEffectTexture.image_for(width,fields)
+	if image==null:
+		if land_effect_texture!=null:
+			shared_material.set_shader_parameter("beautify_enabled",false)
+			shared_material.set_shader_parameter("beauty_field",null)
+			shared_material.set_shader_parameter("beautify_detail",null)
+			land_effect_texture=null
+		return
+	var material := terrain_material()
+	if land_effect_texture==null or land_effect_texture.get_width()!=width:
+		var detail_mask := load("res://assets/extracted/sprites/GemDiffuse.tga") as Texture2D
+		if detail_mask==null:
+			return
+		land_effect_texture=ImageTexture.create_from_image(image)
+		material.set_shader_parameter("beauty_field",land_effect_texture)
+		material.set_shader_parameter("beautify_detail",detail_mask)
+		material.set_shader_parameter("beauty_width",float(width))
+		material.set_shader_parameter("beautify_enabled",true)
+	else:
+		land_effect_texture.update(image)
 
 
 func apply_voyage(state: Dictionary) -> void:
@@ -53,7 +92,7 @@ func apply_voyage(state: Dictionary) -> void:
 func rebuild(state: Dictionary, force: bool = false) -> void:
 	if int(state["width"]) <= 64:
 		mesh = make_mesh(Geometry.build(state,view_region,colors))
-		if material_override == null: material_override = Ground.terrain_material()
+		material_override=terrain_material()
 		return
 	source = {"width":state["width"],"terrain":state["terrain"]}
 	if force or revision != int(state["terrain_revision"]) or detail != bevel_segments*100+sample_stride:
@@ -100,8 +139,7 @@ func _process(_delta: float) -> void:
 		if active_generation == generation:
 			if not chunks.has(active_key):
 				var node := MeshInstance3D.new()
-				if shared_material == null: shared_material = Ground.terrain_material()
-				node.material_override = shared_material
+				node.material_override=terrain_material()
 				add_child(node)
 				chunks[active_key] = node
 			chunks[active_key].mesh = make_mesh(arrays)

@@ -121,5 +121,8 @@ func audio_assets() -> Dictionary:
 		var path: String = "res://assets/original/audio/" + paths[role]
 		if ResourceLoader.exists(path):
 			result[role] = load(path)
-	result.merge(preload("res://infrastructure/audio_events.gd").events(["PLAYSOUND_SCULPTLOOP", "STOPSOUND_SCULPTLOOP", "PLAYSOUND_FOLLOWERSTATEREACTTOCHEST", "PLAYSOUND_FOLLOWERSTATECELEBRATECARD"]))
+	var source_events := preload("res://infrastructure/audio_events.gd")
+	result.merge(source_events.events(["PLAYSOUND_SCULPTLOOP", "STOPSOUND_SCULPTLOOP", "PLAYSOUND_FOLLOWERSTATEREACTTOCHEST", "PLAYSOUND_FOLLOWERSTATECELEBRATECARD", "Pit of Doom sacrifice", "Fountain celebration", "Shrine belief collection"]))
+	result["beautify_loop"] = source_events.beautify_loop()
+	result["rain_loop"] = source_events.rain_loop()
 	return result

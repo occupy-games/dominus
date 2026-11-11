@@ -46,14 +46,14 @@ static func cell(state: Dictionary,fields: Callable,x: int,z: int) -> Dictionary
 	return result
 
 
-static func clear_capacity(fields: Callable,x: int,z: int) -> int:
-	for size in range(1,Plots.MAX_SIZE+1):
+static func clear_capacity(fields: Callable,x: int,z: int,limit: int=Plots.MAX_SIZE) -> int:
+	for size in range(1,limit+1):
 		for offset in range(size):
 			for point: Vector2i in [Vector2i(x+offset,z+size-1),Vector2i(x+size-1,z+offset)]:
 				if point.x<0 or point.y<0 or point.x>=1023 or point.y>=1023: return size-1
 				var data: Dictionary=fields.call(point.x,point.y)
 				if not data["flat"] or data["scenery"] or data["blocked"]: return size-1
-	return Plots.MAX_SIZE
+	return limit
 
 
 static func region(state: Dictionary,tile: Vector2i,rules: Dictionary,sizes: Array,fields: Callable,loaded: Callable,band: Callable,height: Callable,special_id: int=-1,eligibility: Callable=Callable(),fresh_allowed: bool=true) -> void:
@@ -86,9 +86,11 @@ static func region(state: Dictionary,tile: Vector2i,rules: Dictionary,sizes: Arr
 	var occupied := {}
 	for key: String in state["owners"]: occupied[int(key)]=true
 	var capacities := {}
+	var largest := 0
+	for bounds: Array in sizes: largest=maxi(largest,int(bounds[1]))
 	var capacity := func(x: int,z: int) -> int:
 		var key := z*1024+x
-		if not capacities.has(key): capacities[key]=clear_capacity(fields,x,z)
+		if not capacities.has(key): capacities[key]=clear_capacity(fields,x,z,largest)
 		return int(capacities[key])
 	var eligible := eligibility if eligibility.is_valid() else func(x: int,z: int) -> bool: return fields.call(x,z)["eligible"]
 	var fresh := Plots.new_region(tile,1024,sizes,loaded,capacity,band,eligible,occupied,state["free"].size())

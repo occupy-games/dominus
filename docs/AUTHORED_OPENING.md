@@ -21,6 +21,59 @@ failure hook identifies the coastal free-sculpt band.
 
 ## Implemented portion
 
+Choose **Campaigns → Homeworld6** in the main menu. The selection screen shows
+the current playable endpoint. The same opening can be launched from the
+project root with
+
+```
+/Applications/Godot.app/Contents/MacOS/Godot --path game -- --homeworld6-opening
+```
+
+This entry uses a separate save. The played sequence reaches ten followers,
+presents the original New Age Shelters card and opens its first source chest.
+The chest awards the Tools sticker needed by that card. Open the Timeline from
+the top-left button, acknowledge its original explanations, drag Tools onto New
+Age Shelters, then close the Timeline. Release Builders onto reachable flat
+plots to build Beach Huts. The original next milestone awards Restore Ruins
+at 16 followers. Open that card, dismiss its explanation and release Builders
+near the first Shrine of Expansion. They prioritize the reachable repair over
+nearby house plots. After repair, click the Beacon card to activate its original
+influence areas. More reachable plots support the next population milestone,
+Power of Prayer at 24 followers. Open and close that card, then click the
+belief markers on the Beach Huts. Acknowledge the belief counter explanation
+and drag an upper grass layer. Build toward the Pit of Doom and release a
+Builder from a nearby house once the site is inside your influence. Click the
+card above the repaired Pit, then close its explanation. At 50 followers, open
+and close the Leashing card to enter the original tutorial map. Click and hold
+the indicated follower, drag to the plot and release. Then hold on the house
+and drag an occupant to the same building site. In the group lesson, hold
+over each of the four followers in turn and release over the shrine. The
+completion message returns you to Homeworld. Hold on a free follower or a
+house with a releasable Builder and drag to the Dock. The Dock becomes
+actionable once the Pit's influence area has expanded. Claim the Voyages card
+after repairs, then select the Dock and press GO to sail to the first island.
+You can also leash followers into the repaired Pit of Doom. The Pit awards
+gems after the pending sacrifices finish and their original payout delay has
+elapsed. Each sacrifice reduces happiness and slows births in the follower's
+ordinary abode. Select the Pit to see its totals.
+Victory returns you to Homeworld with the original Farming prompt and opens
+voyage selection from the Dock. Excavate buried sticker chests and complete
+the Wooden Lodge cards with compatible stickers to build at higher elevations.
+Release nearby Builders or leash them to later Beacons of Expansion, then
+claim the card over each repaired site to expand the original influence areas.
+At 165 followers, open and dismiss the Farming card. Collect 3,000 belief and
+select the Farming Settlement power. Drag the placement ring over completed
+homes, then press Preview and Squish it! Click the settlement to release a
+Farmer, or leash a Farmer to a valid plot within its radius. Click the field's
+marker when the wheat is ready. Start two fields to reveal Super Fast Building.
+Claim the card and follow its prompts to collect wheat from the fields near the
+settlement and the original terraced fields. Builders need wheat for ordinary
+abodes outside settlements once the card is active, and the source build-time
+modifier applies to new construction. The later Happiness and Gifts tutorial
+remains unfinished.
+The main menu's Continue action selects the more recently modified standard or
+Homeworld6 opening save after restarting the application.
+
 `campaign_opening_content.gd` loads the source map independently of the older
 opening and injects its authored influence coordinates without translating
 the older map's objects. `campaign_opening.gd` owns rescue state, protected
@@ -468,9 +521,181 @@ frame cases, 99 composed repair cases and 144 continuation steps, with saves at
 each sequence boundary. The separately ported affiliation pass now preserves
 strict deadlines, clock/RNG ordering, overlapping settlement order and the two
 source containment predicates, with 191 geometry cases, 101 affiliation cases
-and 64 continuation steps. Its composition with the frame, spatial index,
-downward motion service, final removal owner and follower job integration still precede
-enabling this lifecycle in the authored campaign.
+and 64 continuation steps. `source_temple_lifecycle.gd` now composes affiliation,
+terrain/elevation and repair/completion against the contiguous original
+`0x10140c0f`–`0x101414d8` block. A further 176 cases and 128 continuation steps
+cover both timer branches, forced decay, overlapping settlement order, same-tick
+modifier changes, completion and saved continuation. The shared native type and
+state slots remain single authoritative facts; invalid later inputs reject
+before modifier, clock or random callbacks. Source spatial services, active-pool
+ownership, deferred reward composition, spatial index, downward motion service,
+final removal owner and follower job integration still precede enabling this
+lifecycle in the authored campaign.
+
+The upgrade-mask refresh is now pure simulation as well. Infrastructure supplies
+the eight original `templeupgrades.csv` rows in source order, with their unlock
+IDs and parsed family labels. The port preserves separate 64-bit follower and
+house masks, global per-family bit positions and the first empty-to-active
+spatial invalidation. Ninety cases and 48 saved steps execute original refresh,
+popcount and unlock lookup instructions. A further 174 cases and 128 saved steps
+execute that actual helper inside the contiguous affiliation/terrain/work block.
+`source_temple_effects.gd` now resolves the effect expressions against explicit
+base rows and current actor/site positions. The original parser `0x10171610`
+confirms eight source expressions and five operation-prefix cases. Its field
+offsets come from native column registration: race StaminaDecay uses word 21,
+job StaminaDecay word 10 and housing Capacity word 16, independently of CSV order.
+Eight comparisons cover the original inherited-center/radius helper. Another
+179 cases execute actual follower mask collection (`0x100340d0`), race/job
+getters (`0x100342a0`, `0x100343b0`), housing collection (`0x100b6d60`) and the
+housing getter's shrine effects (`0x100b7580`), including actual containment and
+upgrade refresh. They preserve additive/multiplicative row order, both mask
+words, overlap deduplication and the abode/monastery/farm/mine filters. All six
+monastery class comparisons run. The family shrine's ordinary-house bonus is
+one capacity slot; the other recovered row is not an unconditional extra two.
+Raw source words preserve copied hashes/flags and exact float32 stores. Saved
+input checks and 48 moving-actor steps verify these detached queries. Resolved
+base rows and unrelated global modifiers remain explicit inputs/adapters; the
+queries do not create actors or advance jobs.
+The bulk follower update (`0x1006d050`) now lives in
+`source_temple_propagation.gd`. It clears only active followers' attached stat
+records, preserves permanent masks and unreferenced records, queries only
+nonempty shrine masks and processes the returned candidate list in source order.
+The request retains the shrine's own center/radius; containment can separately
+inherit its settlement's sphere. Null entries and followers without attached
+stats still release their temporary candidate nodes. Repeated candidates OR
+their bits; shared stat records remain shared. Seventy-five native cases and
+64 moving-follower steps compare actual source traversal, clearing, containment,
+OR writes and temporary-node release. Saves restore authoritative masks and the
+explicit candidate service's continuation. Actual race/job getters read the
+resulting stored masks, without a single-actor rescan substituting for the bulk
+pass. Source spatial lookup and candidate allocation remain adapters.
+
+The original house callback (`0x100b6e10`) now refreshes the stored house mask
+before notifying geometry. An attached reference suppresses only the geometry
+callback, not mask refresh; unchanged masks still notify when no reference is
+attached. Another 118 native cases and 32 moving-house steps execute the actual
+wrapper, containment, callback gate and shrine housing-stat getter, including
+saved continuation. The pure stat consumers `follower_from_mask` and
+`house_from_mask` return detached rows without mutating authoritative masks.
+The geometry callback's foundation scan (`0x1003b690`) now lives in
+`source_building_foundation.gd`. It counts raw terrain samples differing from
+the building's stored integer anchor in either direction. It preserves inclusive
+half-up bounds, the quarter-unit inset, strict original tolerance and float32
+anchor/difference stores. The counter resets before terrain-override lookup;
+successful overrides suppress raw-ground reads, failed overrides fall back, and
+empty intervals still perform the manager lookup. A further 276 cases and 48
+moving/saved steps execute the actual scan, rounding and absolute-value helper.
+Another 118 cases and 48 steps execute the original house callback, actual scan
+and housing getter together. Attached references keep the previous foundation
+counter while still refreshing shrine masks. The composed pure protocol shares
+one authoritative position and validates later foundation inputs before clearing
+the earlier mask.
+`source_house_terrain_frame.gd` ports `0x100bb96b..0x100bbbdb`, including the
+forced timer update and actual foundation scan. The block beginning at
+`0x100bb9a8` advances damage, converts the remaining timer back to construction
+progress when the foundation recovers, and adds work from the current builder
+count. Damage and completion require a strict threshold crossing. The 244
+native cases and 64 saved sequence steps compare state and callback order,
+including the completion sound and `abodecomplete` hook. Stat-row lookup,
+model changes, effects, economy and the clock use explicit service adapters.
+Terrain-override storage, the rest of the house update and actor lifetime
+registration remain unported.
+
+The target lookup at `0x100b7e80` tests the positive global override
+before the positive per-house override. The Lua table binds these fields to
+`AbodeOverrideBuildTimes`, `AbodeClearOverrideBuildTimes` and
+`AbodeOverrideSingleHouseBuildTime`. The ordinary path multiplies the resolved
+row's `Build Time` by the live multiplier, then applies a second multiplier
+when the special flag is set and the resolved kind equals 1. The descriptor
+records at `0x105e4c10` and `0x105e4c28` bind `FasterBuildTimers` and
+`FasterBuildTimers2` to the same live float at `0x10fcd81c`. The record at
+`0x105e4c88` binds `FasterBuildTimers_Farms` to `0x10fcd844`. Both live
+floats initialize to 1.0 at `0x10437ec0`; the descriptor value floats hold
+0.9, 0.8 and 0.9 respectively. The source modifier pass at `0x101b3181` writes
+unlocked descriptors in table order, so the second general upgrade replaces
+the first. Inactive descriptors leave their destinations as they were.
+`source_progression_modifiers.gd` preserves all 15 records and 14 destinations.
+The composed house frame calls `source_house_build_time.gd` using the live
+values and a resolved row. Another 120 original executable cases and 20
+saved steps exercise the actual unlock set membership query, modifier pass,
+target lookup, foundation scan and house frame together.
+
+`source_house_base_stats.gd` now selects that base row using `0x100b6750`.
+Standalone houses use their stored index. Attached houses use the kind in the
+attachment and the original switch at `0x1013caa0`. The initializer copies
+the five matching settlement rows from the resolved unit table. The fallback
+slot has no initialized template in this source and remains unavailable.
+The attached lookup replaces capacity, breeder count, both belief bounds and
+birth rate, preserving the other recovered fields. The 90 native row cases
+include all 62 source rows. Another 36 cases execute the actual base lookup,
+unmodified stat getter, build-time calculation and terrain/work frame together.
+Those captures keep the shrine masks and environment modifiers clear.
+The named stat query now composes the base row and shrine mask with the
+environment pass at `0x100b7744`. The `Environment Buffs` registration names
+`balance/environmentbuffs.csv`. Its six supplied rows affect
+`Belief Modifier` through tree, rock and God Seed counts or the fraction of
+nearby ground covered by beautification. The original calculation raises
+count-based multipliers to the object count and interpolates beautification
+multipliers from 1. Caps below 1 are floors. Caps at or above 1 are ceilings.
+There are 192 native contribution comparisons and 102 composed stat queries,
+including shrine-before-environment ordering, monastery/farm/mine eligibility
+and real unlock set membership. The house-only branches of the original
+refresh entries now supply those samples. `0x10044670` visits the active
+house pool in order, clears the object counters, uses the base-row vision
+radius for the spatial query and releases the results in traversal order.
+`0x100444c0` refreshes beautification only inside the strict combined
+radius and leaves the object counters intact. Both run the circular scan
+at `0x100b7900`, clearing the old beauty fraction before resolving the
+radius and sampling beauty followed by blight. Seven native refresh cases
+and twelve saved sequence steps compare both branches with the actual
+counting, classification and sampling instructions. The constructor uses
+the same pure classification and scan.
+
+The scan can now read the actual simulation raster. The original field read
+at `0x100cf550` decodes an unsigned byte in units of 1/128, with missing
+tiles returning zero. The combined blight read at `0x100cf4b0` uses the
+greater of fields 2 and 3. The existing-plot query reads field 5 separately.
+The original absolute writers preserve truncation and byte wrap, the
+protected-tile branch and the 128-entry notification queue for fields 1–3.
+The simulation stores tiles in row order and the executable comparison uses
+the original Morton order. Seven native write stages, 18 probes per stage and
+a composed house refresh compare those representations. The authored world
+save restores the fields, and rebuilding influence clears only fields 4 and 6.
+The Beautify action at `0x10086890` quotes the uncovered part of its footprint
+and calls `0x10086780` to clear blight fields 2 and 3, paint dry cells in field
+1 and write their timeout in field 7. The playable campaign command now uses
+that brush. Ten executable cases compare the actual charge request, brush
+bounds, field writes and refresh region. In the public campaign, the brush's
+area callback now updates the ordinary abodes' beauty sample. The port uses
+the compatibility abode center and live vision radius with the recovered
+scan and belief modifier. The arm window limits repeated activation costs.
+The terrain's benefit is independent of that window. At expiry the public
+campaign resamples cached abodes near changed cells. That invalidation is a
+compatibility integration. The original expiry path invokes the cell dirty
+callback, and the original house refresh has separate call sites. The source
+action's other spatial entity effects, full notification consumers and
+particle burst remain pending. The campaign renderer now ports the
+`shdrTerrain50` terrain shimmer using `GemDiffuse.tga`, the texture bound at
+sampler 3 by the original terrain pass. It samples the saved terrain fields on
+the streamed mesh and removes the shimmer as the painted bytes expire. The
+timeout routine at `0x100d0730`
+advances field 7 in whole timer steps, then clears allocated fields 2, 3 and 1
+when a nonzero cell timer reaches zero. The port preserves tile and Morton
+order, retains fractional elapsed time, and reanchors without decrementing
+when the normal clock exceeds the ten-step catch-up limit. Explicit elapsed
+overrides can exceed that limit. Twenty-four original clock transitions cover
+these branches and save continuation. A paid campaign cast runs through the
+default 40-step lifetime in the headless game and reloads before the expiry tick.
+The same run checks the actual belief increment, its displayed rate and
+migration from a save with painted terrain and no cached house fraction.
+The unlock table edits in `balance/balanceunlockmodifier.csv` are a separate
+source path. `Faster_Building_1`, for example, changes the House Values rows.
+
+The separate route-grid consumer at `0x100dc549` additionally gates by tribe,
+family masks and the source spatial query (`0x1013efa0`). Its route-grid propagation,
+spatial invalidation ownership, base-stat resolution and follower/house lifetime
+integration remain unported. These stat-query comparisons do not enable the
+unfinished source campaign or establish all actor behavior.
 
 ## Explicit remaining work
 
@@ -530,10 +755,40 @@ The private definition carries source queue constants and all special-card rows;
 source catalog registration and the remaining domain services still precede
 enabling that path in the playable campaign.
 
-The `promised_land` state now owns the supported arrival and rock-removal steps.
-After the first rock, step 2 records an explicitly unavailable handoff to the
-first-abode stage. It does not run building, breeding, card, shrine or Ark rules
-by substituting the older map's implementation.
+The `promised_land` state owns the arrival, rock removal and first-abode
+steps. After the rock, the source callback pauses the followers and waits one
+second before selecting the plot and offering its original instruction. The
+player can still sculpt inside the authored bounds. The instruction stays
+inactive until the real plot registry finds a nearby footprint. The renderer
+uses the extracted plot texture at the detached center returned by `PlotPos`.
+
+Acknowledging the instruction releases the source reaction. The opening uses
+the source plot conversion and release helpers, the original tent assembly and
+resolved house values, and the tutorial's two-builder override. Movement and
+work use the shared fixed-tick construction service. The source callbacks show
+construction, clear the instruction on completion, and advance the tutorial
+after both followers enter. Native follower action execution and full house
+lifetime still need integration. `test_promised_land.gd` plays this sequence
+from rescue using ordinary commands and reloads the world during construction.
+
+The next source callbacks use the second-plot area at `(162,127)`. Clearing
+rocks checks the tent's builder availability after one second. The builder pip
+and the tent submit the same validated release command. The first tent retains
+its breeder, and the released follower walks to a real nearby plot, builds and
+occupies the second tent. The original tutorial holds entrance and breeding
+behind their separate acknowledgements. The fixed-tick clock uses the source
+birth interval and the original sunrise routine at `0x1019cc50` to restore day
+speed. Save/load preserves the paused timer and recursive source callback. A
+save from the earlier second-plot handoff enters the new source callbacks when
+its archive and callback identities match.
+
+The growth tutorial uses the original callbacks to count nearby plots and
+abodes and to lock builder release at the end of the stage. Builders consume
+reachable registry plots and reserve their old bed until they enter the new
+tent. The population threshold and card come from the scoped original tables.
+Showing the card requests an autosave, and closing the card or loading that
+autosave advances to the chest handoff. The card's technology research remains
+pending until a matching sticker is assigned.
 
 `test_campaign_opening.gd` plays the actual rescue and first-cliff stair drags on
 the real map, follows the pair to their first land-assessment pause and checks callbacks, detached state, malformed
@@ -571,13 +826,14 @@ values and explicit unresolved fields. `test_source_plot_allocation.gd` compares
 the nine fresh-region and 704 biome captures. `test_house_selection.gd` compares
 4,608 original building choices and the native availability profiles.
 `test_source_terrain.gd` compares default discrete source terrain queries and
-their original Lua binding. These checks do not enable the still-unported abode
-stage.
+their original Lua binding. End-to-end abode progression is checked separately
+through the source callbacks and ordinary player commands.
 
 `campaign_opening_player.gd` is a pure deterministic self-player. Its hypothetical
 route search only chooses gestures; every edit is revalidated through the same
 world command as player input. It cannot write terrain, teleport followers, grant
-belief or change the story. The interactive campaign picker remains unchanged.
+belief or change the story. It reconnects a stranded Builder's existing job
+with validated layer drags before preparing further house plots.
 For an isolated simulation run:
 
 ```
@@ -588,7 +844,91 @@ The run writes its ordinary command trace to `build/authored-trail-commands.json
 the verification suite writes provenance and its checked run to
 `build/authored-trail-playthrough.json`. These are trail-only artifacts.
 Add `-- --promised-land` to continue the self-player through the supported first
-rock-removal step and stop at the explicitly unavailable abode stage.
+rock removal, five occupied tents, the ten-follower card and the first chest.
+It continues through the original Timeline explanations, the typed resource
+drop, the exit and three completed Beach Huts. It then opens Restore Ruins,
+repairs the first Beacon, clicks its reward card and prepares further housing
+for the 24-follower Power of Prayer milestone. The self-player completes that
+card, collects belief from the source house group and performs the grass-layer
+drag. The New Age Shelters card is completed and its one Tools sticker has
+been consumed.
+
+After Timeline exit, the source plot selector chooses the unlocked
+`AbodeType_1_Rank_1` row. It uses the assembled `lowlandrural2` model and its
+inherited capacity, build time and breeding values. The first completed hut
+runs the source abode callback and anchors the original tip to the house.
+Moving a Builder to a completed hut frees their previous bed. Births in both
+homes count toward the original 16-follower milestone.
+
+The first Beacon is source temple `1012` at `(165,144)`. Repair uses its original
+assembled model, rotation, two-Builder capacity, work arithmetic and 600-tick
+duration. Its recovered terrain-footprint predicate pauses work when terrain
+buries the site. Builders reserve their home beds during repair and return
+afterwards. Completing construction sets a separate repaired state. Clicking
+the source `Card_Expansion` portrait activates the temple and unlocks the
+original `Expansion_1a` and `Expansion_1b` influence areas. The source script's
+messages, autosave, reload continuation and population threshold execute through
+the same inert callback interpreter. Mid-repair SQLite continuation is compared
+tick for tick by `test_promised_land.gd`.
+
+The playable integration uses the existing cell-route and approach adapter for
+Builders. Full native follower action dispatch and house lifetime remain
+unfinished.
+
+The four original Belief listeners and seven localized messages execute through
+the existing interpreter. The desktop listener gives 500 belief if the balance
+is zero, fills nearby Beach Huts to their inherited capacity and selects at
+most four houses. `source_abode_clumps.gd` follows the native pool traversal,
+strict distance test, linked merge order and first-largest tie rule at
+`0x10246d80`. The isolated oracle checks 64 original callback sequences and
+12 cases of the fill routine at `0x100b8a30`, including preservation of a bank
+above the house's fill level.
+
+Each collection moves the house's stored belief into the balance through the
+same single-click command as the rest of the game. Save continuation executes
+the original card reload callback and the persisted first-collection shortcut.
+The counter hint and its 30-second fallback both reach the source grass lesson.
+Its completion callback receives the actual layers of the validated terrain
+edit, preserving the original skip for already lowered grass. The original
+house-group arrow request and target handles are retained as plain state. Its
+visual mapping remains unfinished. During Discovery, occupied Beach Huts
+generate collectible belief on the existing campaign production clock using
+their inherited belief values. The exact native production cadence remains
+unverified.
+
+The desktop Discovery and Pit of Doom listeners run against the original site
+at (170, 162). The claim unlock follows the source influence check, and
+construction uses the site's source work requirement and Builder slots. The
+original repair reward is `Card_PitOfSacrifice`. The popup carries the original
+localized explanation and its dismissal requests an autosave.
+
+To regenerate the independent native comparison and run it in Godot
+
+```
+PYTHONPATH=build/research-tools python3 -m tools.native_abode_clumps_oracle
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path game --script res://tests/test_abode_clumps.gd
+```
+
+The first chest uses Homeworld6 `rewardchests.csv` row 5 at `(177,147)`.
+`authored_chests.gd` composes the recovered constructor, exposure, opening,
+reward-capacity and disappearance rules. The original Promised Land camera
+callbacks select the search and click instructions. Opening starts the recovered
+animation immediately, awards `Sticker_Tools_1` after the source opening timer,
+and removes the actor after the source disappearance timer. The consumed source
+ID, capacity counters and exact float32 phase timer persist through SQLite.
+Rendering and picking receive detached chest snapshots. The typed research query
+verifies that this sticker fits New Age Shelters.
+
+The recovered Timeline stages retain their localized explanations and GUI
+targets, the source input locks and the original callbacks for opening,
+assignment and closing. Simulation commands gate both the close control and the
+typed card drop. Completing New Age Shelters consumes the sticker in inventory
+and native chest-capacity accounting, persists its assigned resource, and runs
+the original completion callback and autosave. Reloading an incomplete Timeline
+uses its original restart fallback. Reloading the completed-card autosave uses
+the source return-to-Homeworld fallback. Program functions are appended during
+extraction, allowing old pending callbacks to retain their identifiers when
+verified opening saves receive the new stages.
 
 The next source investigation is follower construction assignment. The original
 `GetFirstPlotInRadius` Lua binding is `0x10243550`: it queries spatial kind mask

@@ -23,6 +23,7 @@ class Compiler:
         self.tokens.append('<eof>')
         self.cursor = 0
         self.functions = {}
+        self.local_function_names = {}
         self.calls = set()
         self.quirks = []
 
@@ -69,7 +70,10 @@ class Compiler:
             local = self.accept('local')
             if self.accept('function'):
                 name = self.take()
-                statements.append(['local' if local else 'assign', ['var', name], self.function()])
+                function = self.function()
+                if local:
+                    self.local_function_names[function[1]] = name
+                statements.append(['local' if local else 'assign', ['var', name], function])
             elif self.accept('if'):
                 branches = []
                 condition = self.expression()

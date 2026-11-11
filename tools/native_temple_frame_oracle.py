@@ -26,6 +26,7 @@ def state(**changes):
 
 
 class FrameOracle(FootprintOracle):
+    START=0x10140d1e
     END=0x10141204
     FIELDS=dict(FootprintOracle.FIELDS,motion_handle=0x390)
     FLOATS=dict(FootprintOracle.FLOATS,x=0x278,z=0x27c,height=0x280,
@@ -86,10 +87,11 @@ class FrameOracle(FootprintOracle):
                           (self.regs.UC_X86_REG_ESI,self.site),(self.regs.UC_X86_REG_EBX,0)]:self.cpu.reg_write(reg,value)
         # The preceding timed-affiliation branch leaves its native 5.0
         # constant in ST(0). Preserve that actual incoming FPU frame.
-        start=b'\xdb\xe3\xdd\x05'+struct.pack('<I',0x104ad750)
+        start=b'\xdb\xe3'
+        if self.START==0x10140d1e:start+=b'\xdd\x05'+struct.pack('<I',0x104ad750)
         self.cpu.mem_write(self.SCRATCH+0x700,start)
         self.cpu.emu_start(self.SCRATCH+0x700,self.SCRATCH+0x700+len(start))
-        self.cpu.emu_start(0x10140d1e,self.END,count=5000000)
+        self.cpu.emu_start(self.START,self.END,count=5000000)
         if self.cpu.reg_read(self.regs.UC_X86_REG_EIP)!=self.END:raise ValueError('Temple frame instruction budget exhausted')
         return dict(state=self.snapshot(),events=copy.deepcopy(self.events),queries=copy.deepcopy(self.queries))
 

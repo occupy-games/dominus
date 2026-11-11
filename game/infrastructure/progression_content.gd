@@ -84,6 +84,13 @@ static func rules(definition: Dictionary) -> Dictionary:
 		result[group]=result[group].filter(func(item: Dictionary) -> bool: return item["x"]>=0 and item["z"]>=0 and item["x"]<definition["width"] and item["z"]<definition["width"])
 	preload("res://infrastructure/research_content.gd").extend_rules(result,definition.get("research_scope","initialworldsetup6"))
 	var source: Dictionary=preload("res://infrastructure/research_content.gd").source
+	result["beautify_rules"]=preload("res://infrastructure/beautify.gd").rules(source["executable_sha256"],source["source_sha256"])
+	if result["beautify_rules"].is_empty(): return {}
+	var environment := preload("res://infrastructure/house_environment.gd").content(source["executable_sha256"],source["source_sha256"])
+	for buff: Dictionary in environment.get("records",[]):
+		if buff["kind"]==2 and buff["field"]=="belief modifier" and buff["abode"]==1:
+			result["abode_beauty"]={"buff":buff,"surroundings":environment["surroundings"]}
+			break
 	var supply := preload("res://infrastructure/storm_chests.gd").load_content(source["executable_sha256"],source["source_sha256"])
 	if not supply.is_empty():
 		var scope: Dictionary=supply["scopes"].get(result["research_scope"],{})
@@ -126,7 +133,7 @@ static func rules(definition: Dictionary) -> Dictionary:
 static func power_assets(definition: Dictionary) -> Dictionary:
 	var result := {}
 	var sheet: Texture2D = load("res://assets/extracted/sprites/Icon_GodPowers_NewSheet.png")
-	var ids := {"GodPower_TotemActivate":1,"GodPower_Totem":2,"GodPower_Beautify":9,"GodPower_FingerOfGod":19}
+	var ids := {"GodPower_TotemActivate":1,"GodPower_Totem":2,"GodPower_Beautify":9,"GodPower_FingerOfGod":19,"GodPower_RainOfPurity":20}
 	for power: String in ids:
 		for row: Array in definition["tables"].get("gui/miracledata.csv",[]):
 			if row.size()<9 or not str(row[0]).is_valid_int() or int(row[0])!=ids[power]: continue

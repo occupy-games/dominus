@@ -8,12 +8,14 @@ const Card = preload("res://presentation/ui/source_card.gd")
 const TYPE_ICONS := {"TECH":"Science","TRADE":"Industry","FAITH":"Religion","SOCIAL":"Society","WAR":"Military"}
 var cards: Dictionary = {}
 var inspect_command: Callable
+var close_handler: Callable
 var snapshot: Dictionary = {}
 var selected := ""
 var mode := "cards"
 var content := VBoxContainer.new()
 var last_revision := -1
 var confirm_button: Button
+var close_button: Button
 var tabs: TabContainer
 var detail: VBoxContainer
 var tab_index := 0
@@ -23,6 +25,7 @@ var resource_tray: HBoxContainer
 var resource_slots: Dictionary = {}
 var detail_card: TextureButton
 var known_resources: Dictionary = {}
+var last_timeline_step := -1
 
 
 func _ready() -> void:
@@ -37,9 +40,13 @@ func _ready() -> void:
 
 
 func apply_snapshot(state: Dictionary) -> void:
+	var cliff_changed: bool=selected=="Card_GodPower_CliffSculpt" and snapshot.get("opening",{}).get("cliff_status",{})!=state.get("opening",{}).get("cliff_status",{})
+	var collector_changed: bool=selected=="Card_Monument_BeliefCollect" and snapshot.get("opening",{}).get("collector_status",{})!=state.get("opening",{}).get("collector_status",{})
 	snapshot=state
 	var revision: int = state.get("progression",{}).get("revision",-1)
-	if visible and revision!=last_revision: redraw()
+	var timeline_step: int=state.get("opening",{}).get("timeline_step",-1)
+	if visible and (revision!=last_revision or timeline_step!=last_timeline_step or cliff_changed or collector_changed): redraw()
+	last_timeline_step=timeline_step
 
 
 func open_card(id: String) -> void:
@@ -50,10 +57,40 @@ func open_card(id: String) -> void:
 
 
 func open_book() -> void:
-	visible=not visible
 	if visible:
-		if selected.is_empty(): selected="Card_Sculpting" if mode=="powers" else "Card_GenerateBelief"
-		redraw()
+		close_book()
+		return
+	visible=true
+	if selected.is_empty(): selected="Card_Sculpting" if mode=="powers" else "Card_GenerateBelief"
+	redraw()
+
+
+func add_power_upgrade(status: Dictionary,command_type: String) -> void:
+	var upgrade: Dictionary=status.get("next",{})
+	if upgrade.is_empty(): return
+	var cost: String="%d %s"%[int(upgrade["cost"]),upgrade["currency"]]
+	var button:=Style.button("%s  ·  %s"%[upgrade["button"],cost],func() -> void: confirm_power_upgrade(upgrade,cost,command_type))
+	button.disabled=not status["affordable"]
+	detail.add_child(button)
+
+
+func confirm_power_upgrade(upgrade: Dictionary,cost: String,command_type: String) -> void:
+	var dialog:=ConfirmationDialog.new()
+	dialog.title=upgrade["title"]
+	dialog.dialog_text="%s\n%s"%[upgrade["description"],cost]
+	dialog.ok_button_text=upgrade["button"]
+	dialog.theme=theme
+	add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		command_requested.emit({"type":command_type,"id":upgrade["id"]})
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered()
+
+
+func close_book() -> void:
+	if close_handler.is_valid(): close_handler.call()
+	else: hide()
 
 
 func is_resource(card: Dictionary) -> bool:
@@ -169,6 +206,7 @@ func build_resource_tray() -> void:
 		image.source=entry
 		image.resource_id=id
 		image.resource_count=count
+		image.resource_drag_enabled=snapshot.get("opening",{}).get("phase")!="timeline" or snapshot["opening"].get("timeline_input_lock",3)<=1
 		image.self_modulate.a=1.0 if count>0 else 0.3
 		image.custom_minimum_size=Vector2(68,76)
 		image.pressed.connect(func() -> void: selected=id; tab_index=1; redraw())
@@ -202,7 +240,9 @@ func redraw() -> void:
 	var heading := Style.label("Powers" if mode=="powers" else "Cards",26,Style.TEXT)
 	heading.size_flags_horizontal=Control.SIZE_EXPAND_FILL
 	header.add_child(heading)
-	header.add_child(Style.button("×",func() -> void: visible=false))
+	close_button=Style.button("×",close_book)
+	close_button.disabled=snapshot.get("opening",{}).get("phase")=="timeline" and snapshot["opening"].get("timeline_input_lock",3)>0
+	header.add_child(close_button)
 	content.add_child(header)
 	var body := HBoxContainer.new()
 	body.size_flags_vertical=Control.SIZE_EXPAND_FILL
@@ -324,7 +364,20 @@ func show_detail() -> void:
 			if power.is_empty(): power=str(entry.get("power",""))
 			if power.is_empty(): power=action.trim_prefix("Card_")
 			var cost := int(p["rules"].get("economy",{}).get("settlements",{}).get(power,{}).get("cost",p["rules"]["config"].get("belief_"+power.trim_prefix("GodPower_"),0)))
-			paragraph("Belief: %d" % cost)
+			var rain: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("rain",{})
+			var fountain: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("fountain",{})
+			var cliff: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("cliff_sculpt",{})
+			var collector: Dictionary=snapshot.get("opening",{}).get("collector_status",{})
+			var collector_power: bool=power=="GodPower_PlaceBeliefCollect" and not collector.is_empty()
+			if not rain.is_empty() and power==rain["power"]:
+				paragraph("%d belief per second" % int(rain["cost_per_second"]))
+			elif not fountain.is_empty() and power==fountain["power"]:
+				paragraph("%d gems" % int(fountain["gems"]))
+			elif not cliff.is_empty() and power==cliff["power"]:
+				var status: Dictionary=snapshot["opening"].get("cliff_status",{})
+				paragraph("%s  %d" % [cliff["layers_label"],int(status.get("layers",cliff["layers"]))])
+			elif collector_power: paragraph("Belief: %d" % int(collector["price"]))
+			else: paragraph("Belief: %d" % cost)
 			if power=="GodPower_TotemActivate":
 				paragraph("Capacity: %d" % int(p["totem_capacity"]))
 				var move := Style.button("Move Totem",func() -> void: power_requested.emit("GodPower_Totem"); visible=false)
@@ -332,8 +385,13 @@ func show_detail() -> void:
 				detail.add_child(move)
 			var cast := Style.button(entry["title"],func() -> void: power_requested.emit(power); visible=false)
 			cast.disabled=not power in p["powers"]
+			if not fountain.is_empty() and power==fountain["power"]:
+				cast.disabled=cast.disabled or int(snapshot.get("gems",0))<int(fountain["gems"])
+			if collector_power: cast.disabled=not collector["can_place"]
 			detail.add_child(cast)
-			if cast.disabled:
+			if power=="GodPower_CliffSculpt": add_power_upgrade(snapshot.get("opening",{}).get("cliff_status",{}),"campaign_cliff_upgrade")
+			if collector_power: add_power_upgrade(collector,"campaign_belief_collector_upgrade")
+			if not power in p["powers"]:
 				var links := {}
 				for condition: String in p["rules"].get("source_unlocks",{}).get(power,[]):
 					var required := condition.trim_suffix("_COMPLETED")

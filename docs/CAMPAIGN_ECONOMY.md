@@ -5,11 +5,11 @@ population, grain, ore, unlock, house, temple and job records. Its manifest is
 `game/assets/original/campaign/research-rules.json`. Each table and the containing
 archive retain SHA-256 evidence. Executable float defaults retain initializer,
 value, name and configuration-slot addresses; authored CSV values override them.
-Seven original setup scopes are preserved separately. They have not yet been
-registered to the eight large-map campaigns. Additional runtime research now
-uses `initialworldsetup6`, which matches the supplied 2.4 video milestones.
-The older opening/map/influence bridge still needs replacement by the original
-scope-specific story; changing research does not establish that registration.
+Seven original setup scopes are preserved separately. Homeworld uses
+`initialworldsetup6` for the current research milestones. New Homeworld7 games
+use the Weyworld research scope and its authored stocks, wheat costs, chest
+sites, beacon sites, and influence unlocks. The other campaign starts still
+need their individual stories and registrations.
 
 The existing playable opening retains its component contracts. Additional
 advances use the original typed research requirements. Matching source stickers
@@ -26,14 +26,27 @@ requirements, and their original power gates activate on discovery. Wheat and
 ore spending have separate source gates. Super Fast Building enables wheat
 spending and applies the source 0.1 build-time multiplier. Advanced Farming uses
 its original 1.5 production multiplier across all six source field ranks.
-The scope7 Crop Rotation and Superior Pickaxes effects are also implemented;
-Weyworld campaign/Ark registration and transition remain incomplete.
+Weyworld's population track includes Crop Rotation at 450 followers and
+Superior Pickaxes at 800. Both use their original research requirements and
+production effects. Weyworld's four free farms and fourteen free mines are
+placed at the positions and sizes in `initialworldsetup7/scripts.lua`. Each
+fills once when its center becomes actionable. The original `AbodeFillFood`
+binding at `0x1023cf00` calls `0x100b8a30`, which raises the stored harvest to
+the house row's `Max Belief` value. Click a full site to collect the wheat or
+ore. Collection and the one-time fill survive saving and loading. With the
+corresponding settlement advance, deploy a farmer or miner from a nearby
+settlement to grow and deliver later harvests from the existing site. The Ark
+transition that carries those advances from Homeworld remains incomplete.
 Select the corresponding original power in the powers
 gallery and click a completed abode. The simulation groups nearby eligible
 abodes under one community, charges its source placement cost and enforces the
 source population limit. Original town-centre and profession-statue models mark
 the settlement. Clicking it collects delivered wheat, ore and member belief;
-otherwise it sends an available worker to a reachable nearby plot.
+otherwise it sends an available worker to a reachable nearby plot. Farmer and
+miner deployments check eligible, unstaffed buildings before new construction,
+following the original selectors' existing-building branch at `0x100cb444`
+and its mine counterpart. The current deployment uses the campaign's
+settlement radius and route finder.
 
 Farmers and miners construct original field/mine assemblies. Their jobs retain
 the source construction times, plot sizes, harvest limits and production formula
@@ -89,6 +102,11 @@ separate build profile and save, never the player's campaign.
 `test_economy_interface.gd` additionally applies an earned sticker through the
 real gallery, selects the original power, places a settlement through world
 input and sends a farmer out through the same click controls as normal play.
+`test_campaign_maps.gd` exercises the first Weyworld beacon and the authored
+farm and mine on its original terrain. Nearby followers and inherited advances
+are fixture inputs. After claiming the free harvest, the test builds homes,
+casts both settlement powers, deploys workers, saves during the work cycle and
+collects the next deliveries after restoring.
 `test_render_batches.gd` checks separate crop growth values on the native GPU
 backend and shared source meshes across worker IDs; its headless run checks
 batch ownership/reuse but cannot read GPU custom data from the dummy renderer.

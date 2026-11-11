@@ -34,6 +34,9 @@ def extract():
         if not temple.get('name') or not temple.get('InfoPanelPic'): continue
         relative='Scaleform_Compiled/'+temple['InfoPanelPic']
         original=ROOT/'data/godus2_4'/relative
+        if not original.is_file() and temple['name'] in ('pitofsacrifice','Monument_BeliefCollect'):
+            relative='Scaleform/'+temple['InfoPanelPic']
+            original=ROOT/'data/godus2_4'/relative
         if not original.is_file(): continue
         records['Temple_'+temple['name']]=dict(title=text(temple.get('nametext',''),localization),
             title_key=temple.get('nametext',''),illustration_source=relative,
@@ -41,9 +44,10 @@ def extract():
     labels = {k: text(v, localization) for k,v in localization.items() if k.startswith((
         'LOC_ROWNAME_HOME_', 'LOC_ROWNAME_FARM_', 'LOC_ROWNAME_MINE_', 'LOC_INFO_HOUSE_',
         'LOC_INFO_FARM_', 'LOC_INFO_MINE_', 'LOC_INFO_SUB_', 'LOC_INFO_SETTLEMENT_',
-        'LOC_INFO_SHRINE_', 'LOC_ROWNAME_SHRINE_', 'LOC_INFO_TIME_',
+        'LOC_INFO_SHRINE_', 'LOC_ROWNAME_SHRINE_', 'LOC_INFO_TIME_', 'LOC_ROWNAME_PITOFDOOM_', 'LOC_INFO_PITOFDOOM_',
         'LOC_TemplePos_', 'LOC_TEMPLE_INFO_', 'LOC_BUTTON_SETTLEMENT_ASSIGN_BUILDERS'))}
-    for key in ['LOC_INFOPANEL_STATS', 'LOC_INFO_TITLE_STATS', 'LOC_INFO_TITLE_COMPONENTS']:
+    for key in ['LOC_INFOPANEL_STATS', 'LOC_INFO_TITLE_STATS', 'LOC_INFO_TITLE_COMPONENTS', 'LOC_BUTTON_DOCK_GO', 'LOC_INFO_STATDATA_Radius',
+                'LOC_BUTTON_SETTLEMENT_MERGE', 'LOC_BUTTON_SETTLEMENT_MERGE_CONFIRM', 'LOC_BUTTON_SETTLEMENT_MERGE_CANCEL']:
         if key in localization: labels[key]=text(localization[key], localization)
     return dict(version=1, source='received/godussteamrel/balance.datz',
                 source_sha256=hashlib.sha256(archive).hexdigest(),

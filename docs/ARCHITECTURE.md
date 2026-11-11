@@ -94,6 +94,12 @@ that identity on load for bathymetry and legacy migrations; presentation never
 chooses or changes authoritative terrain. Unsupported source maps have no
 start action.
 
+Weyworld's direct start binds the source version table to the Homeworld7 map.
+Infrastructure supplies its scoped research, currencies, chest and temple
+sites, and influence areas. Simulation applies the original quantized circle
+test for ordinary and powers-only actions. Completing the source beacon
+enables its linked areas. Older saves keep their existing site registration.
+
 Voyages use the same terrain and command contract with pure expedition rules
 in `simulation/voyage.gd`. The adapter injects verified island crops, mission
 configuration and offline-parsed source-script instructions. A bounded pure
@@ -103,16 +109,65 @@ general code or scene services. Immutable definitions can be shared across
 detached snapshots; mutable script variables, schedules and hazard fields cannot.
 Missing source terrain leaves a mission unavailable.
 
-The authored Homeworld6 rescue/trail is a separate, currently unpublished
-campaign port. Infrastructure recovers the manual Lua spawns and inert source
+The authored Homeworld6 opening is selectable in Campaigns and uses a separate
+save. The picker describes its currently supported endpoint.
+Infrastructure recovers the manual Lua spawns and inert source
 callbacks; simulation owns rescue, source schedules, UI acknowledgement and
 navigation. Presentation only draws source clips/messages and submits commands.
 Camera-dependent callbacks consume a commanded orthographic projection as eight
 plain numbers and a camera-movement-end flag. Simulation owns screen-margin tests,
 offscreen pause/resume, tutorial persistence and the original guarded catch-up;
 it never queries a camera or renderer. Headless self-play defaults to an explicit
-all-seeing observer and can replay the same camera commands. The campaign remains
-unpublished while later stages are ported. See `docs/AUTHORED_OPENING.md`.
+all-seeing observer and can replay the same camera commands. The first abode
+uses an authoritative plot slot and delivers the source tutorial's construction
+and occupancy callbacks. See `docs/AUTHORED_OPENING.md`.
+
+The original Shrine of Expansion callbacks continue after the 16-follower
+milestone. Simulation prefers its reachable repair when a Builder is released,
+uses source temple work and terrain-clearance predicates, and keeps repaired
+and activated state distinct. Presentation projects the original reward card
+over a repaired Beacon and submits a validated activation command. Activation
+unlocks the source influence areas and their fixed-tick expansion. Housing can
+then reach the original 24-follower Power of Prayer milestone. The Belief
+listeners use source house grouping and capacity to fill the Beach Huts. A
+single-house collection command moves belief to the balance and passes the
+house ID to the original script. The grass completion callback consumes the
+layers from the validated edit. Presentation receives localized prompts,
+belief balance and camera requests as detached data. The desktop Discovery
+listeners enable the Pit of Doom repair after its site enters the influence
+area. Housing and Builder selection reuse the same plot and repair rules.
+Claiming the completed Pit presents its original card and persists the
+reward independently of the popup.
+
+At the original 50-follower milestone, the Leashing card runs its source
+callback to request mission 3. Application suspends Homeworld and starts the
+separate source lesson. Simulation validates the selected followers or
+occupant, drop point, paths, construction slots, and belief in one command.
+Presentation handles the source hold duration and draws the leash. Returning
+to Homeworld runs the source post-load callback. A save during the lesson keeps
+the suspended Homeworld and restarts the lesson when loaded.
+
+Homeworld's unlocked leash resolves selected actors and reachable land or Dock
+approaches before charging belief. The Dock's source row supplies its berth,
+repair duration and Builder capacity. Its blank height field uses the original
+map layer at the berth. The original tutorial callbacks advance on a valid
+leash, completed work, and dismissal of the Voyages card. The Dock's GO command
+hands off to the existing voyage session and returns to the suspended Homeworld.
+The Pit uses the same validated leash. Its native update waits for all pending
+followers and the gem delay before crediting the source weighted payouts.
+Simulation stores the birth penalty, happiness effect and totals. Presentation
+plays the recovered follower clips and the bank event bound by the native Pit
+routine. The beam uses the original model, texture and opacity curve. The
+torch effects remain pending.
+Farming validates the placement ring and member homes in simulation. Confirmation
+combines residents, capacity and stored belief into a settlement core. Farmers
+claim plots through the source registry and accrue collectable wheat on each
+field. The HUD's field count and spendable wheat are separate simulation values.
+The original Super Fast Building callbacks fill source fields and unlock grain
+spending at two player-built fields. Ordinary abode construction quotes the
+original plot cost before reserving a Builder and debits wheat when construction
+starts. Source settlement coverage waives the quote. The original rank modifier
+reduces the duration of abode construction after the card is claimed.
 
 The original final-follower waiting and arrival callbacks run in the same pure
 interpreter. A config-backed day clock uses recovered native midday/sunset
@@ -278,10 +333,13 @@ original height re-enables it. Presentation evaluates the recovered source scale
 curve and updates existing near-mesh or distant-sprite instances. Disabled trees
 cannot intercept picking; permanently cleared trees cannot be re-enabled.
 Runtime density regeneration and planted growth records remain unported.
-Removing that rock does not run the older map's card/reward bridge. The following
-abode stage remains an explicitly unavailable handoff while source unit and plot
-behavior is ported. Native house inheritance is recovered offline; its plain
-resolved values and provenance are injected without scene/asset dependencies.
+Removing that rock starts the authored abode tutorial. The playable opening
+uses the source plot registry and house selection with the game's existing
+follower routing and construction updates. Simulation owns Builder releases,
+reserved beds, occupancy, births and the population reward. Presentation receives
+the selected model and source house identity for assembly and building inspection.
+Infrastructure resolves the inherited source house values without introducing
+scene or asset dependencies into simulation.
 
 The application parks Homeworld during a visit. Island saves include the timer,
 boat population, agents, hazards, script variables, scheduled callbacks and
@@ -645,7 +703,7 @@ native cases and 48 continuation steps execute terrain transitions, elevation
 and actual worker/completion instructions together. Completion sound positions
 use the newly updated authoritative height. Both names for native slot +0x3c4
 must agree before composition, and invalid work totals reject before advancing
-terrain. The original timed settlement-affiliation pass, spatial registration,
+terrain. Spatial registration,
 downward interpolation and final removal remain separate caller dependencies;
 this lifecycle is not enabled by the compatibility repair loop.
 `source_temple_membership.gd` separately owns the original timed affiliation
@@ -654,8 +712,121 @@ consumption, source active-list order and last-containing-settlement ownership.
 Its direct circular and inherited spherical range checks retain their distinct
 boundaries and float storage points. 191 geometry cases, 101 affiliation cases
 and 64 restored sequence steps compare actual native instructions. The original
-type-radius column is injected by infrastructure. Modifier refresh and active
-pool ownership remain explicit services; full lifecycle composition is pending.
+type-radius column is injected by infrastructure. `source_temple_lifecycle.gd`
+composes this affiliation pass with the terrain/elevation frame and actual
+repair/completion in the original order. Another 176 native cases and 128
+continuation steps execute the contiguous original block, including modifier
+changes reaching same-tick repair and elevation. Saves preserve ownership,
+deadlines and work together. The protocol validates all later state/rules before
+invoking modifier, clock or random services, and reads settlement type from the
+same authoritative record throughout. Source spatial services, active-pool ownership,
+deferred reward composition, spatial/motion services and final removal remain
+caller dependencies. These checks do not enable the unfinished authored campaign.
+`source_temple_modifiers.gd` owns the upgrade-mask refresh itself, using eight
+source upgrade rows injected by infrastructure and an explicit unlock predicate.
+It preserves family-wide bit positions, both 32-bit words and the original
+empty-to-nonempty invalidation edge. Ninety native cases and 48 saved sequence
+steps compare actual refresh, popcounts and unlock hash lookup. The lifecycle's
+`advance_modifiers` composes that refresh before affiliation and work; another
+174 contiguous native cases and 128 saved steps compare their shared state and
+service ordering. Table parsing supplies the original family labels. These masks
+alone cannot grant an upgrade or change an actor's stats.
+`source_temple_effects.gd` resolves original shrine effects over explicit actor
+positions, active sites, settlement owners and resolved base rows. Infrastructure
+recovers actual native column offsets rather than CSV positions, operation modes,
+building eligibility flags and all six monastery classes. Pure queries combine
+overlapping masks with OR, preserve direct versus inherited containment and
+apply effects in source family order. Raw 32-bit words preserve untouched hashes,
+flags and numeric storage without coercing whole rows into floats. Returned rows
+and masks are detached; queries cannot change base stats, source sites or unlocks.
+Thirteen original parser comparisons, eight area queries, 179 actual stat-query
+cases and 48 moving-actor steps verify the numeric behavior and saved inputs.
+The composed cases run actual upgrade refresh before actual containment, mask
+collection and race/job or shrine-only housing getters. Unrelated global stat
+modifiers are empty in that comparison. Native base-row resolution, source spatial
+indexing, the separate route-grid update and integration into follower/house
+lifetimes still precede enabling these services in the authored campaign.
+`source_temple_propagation.gd` owns the bulk follower mask update. It clears only
+active followers' referenced stat records, retaining permanent masks and
+unreferenced actors. Nonempty shrine masks submit the original spatial request;
+the simulation-supplied candidate service determines its ordered results. Actual
+containment can inherit a settlement sphere after a request using the site's
+own center/radius. Shared stat references, duplicate candidates and empty nodes
+preserve source OR and release ordering. Seventy-five native cases and 64 moving
+steps compare active traversal, stored writes, candidate-node release and saved
+continuation. Actual race/job getters then consume those stored masks. The
+`follower_from_mask` query cannot replace them with an implicit rescan.
+The same protocol owns the original house callback's stored mask refresh and
+attached-reference gate. It refreshes masks before the geometry service, skips
+that service for attached references and otherwise notifies even for unchanged
+masks. A further 118 native cases and 32 moving steps compare the wrapper,
+containment, callback ordering and actual housing getter. `house_from_mask`
+consumes the stored mask without changing the source house. Both protocols run
+without scenes or devices. Candidate spatial indexing/allocation, terrain
+override ownership, the separate route-grid pass and actor lifetime registration
+remain explicit source simulation services; neither protocol enables the
+unfinished authored campaign.
+`source_building_foundation.gd` now owns the house geometry callback's actual
+foundation scan. The scan measures raw-height mismatch against the stored
+integer anchor, using inclusive half-up bounds and the original inset/tolerance.
+It resets the counter before looking up terrain overrides, uses successful
+override reads directly and falls back to raw ground only on a missing override.
+Both raised and lowered ground count; inverted intervals stay empty. A further
+276 native cases and 48 saved moving steps verify bounds, sample order, float32
+storage, large anchors and strict threshold comparisons. The house protocol's
+`refresh_house_foundation` composes this scan with stored mask refresh and the
+attached-reference gate. Another 118 native cases and 48 saved steps execute
+the original wrapper, actual scan and housing getter together. The position is
+one authoritative field shared by both operations.
+`source_house_terrain_frame.gd` uses that scan to advance construction and
+foundation damage. It preserves the reference gate, float32 timer stores,
+damage recovery, loss of one structural variant per frame and strict work
+and damage thresholds. The simulation emits the original completion and damage
+callbacks in source order. Tests compare 244 original executable cases and
+64 sequence steps across save boundaries. The composed frame resolves its
+construction target from explicit overrides, the current stat row and live
+progression modifiers. The modifier pass updates all 14 original fields in
+descriptor order and uses a supplied unlock query. A further 120 native cases
+and 20 saved steps cover the pass and the resulting house transitions.
+`source_house_base_stats.gd` selects the original standalone and attached
+settlement rows, retaining source fields and overlaying the five live
+attachment values. A further 90 row comparisons and 36 construction frames
+check this selection and its use in the house frame. `source_house_stats.gd`
+uses the selected row, stored shrine mask and current scenery samples in the
+original order. `source_house_environment.gd` applies the six recovered buffs,
+with their original gates, cap direction and float32 stores. Native comparisons
+cover 192 individual contributions and 102 composed stat queries, including
+queries from saved house samples. The surroundings pass refreshes a source
+house pool in active order. A full pass queries objects using the base radius
+and releases each result node. Both full and area passes read the modified
+radius for the circular beautification scan. `source_map_fields.gd` supplies
+the scan from the same sparse tiles used by the influence raster. It preserves
+byte writes, tile protection and the bounded source notification queue.
+Influence rebuilds preserve the other map fields. The world plot query reads
+field 5 from this storage. The campaign Beautify command now quotes and paints
+the original terrain footprint after the unlock and payment checks. It clears
+the two blight layers, and writes beauty and cell timeout bytes only on dry land.
+The brush refreshes nearby campaign abodes using the source area's strict
+distance gate and circular scan. The recovered environment row modifies belief
+production in proportion to painted terrain. Building inspection uses the same
+production query. Construction, upgrades and live abode CSV edits resample
+the affected footprint. The casting window is independent of the terrain
+benefit and does not accelerate births.
+The Beautify presentation scheduler and particle initializer use the extracted
+emitter clocks, curves, atlas settings and spherical spawn parameters. Each
+emitter carries its own random state across rate samples and particle births.
+The headless replay checks those samples and the age-dependent size lookup
+against the original executable across integer and fractional frame timings.
+Live drawing still needs the particle motion and the remaining age updates.
+The fixed-tick world advances the original field 7 timer using the configured
+period, 30 seconds by default. It saves both the countdown bytes and the clock
+anchor. A legacy save with countdown bytes starts its clock on the next tick.
+An expired cell clears allocated layers in source order and publishes its
+coordinate once. The compatibility campaign uses those coordinates to resample
+nearby cached abode fractions. Legacy progression migration rebuilds those
+fractions from the saved terrain. The complete source stat getter, spatial
+index, notification consumers, destruction economy, terrain overrides and
+completed-house lifetime still need integration.
 Map rendering now reconciles dormant site models, source completion stages and
 streamed visibility on snapshots. Picking requires displayed source geometry;
 unavailable or removed saved sites cannot retain old meshes or invisible click
@@ -815,3 +986,8 @@ figures without slowing their interpolated movement. Source tree-imposter art
 and recovered atlas rectangles provide distant tree rendering. Terrain merges
 coplanar caps and samples the height field more coarsely at distant zoom levels;
 this changes presentation geometry only, never simulation terrain or picking.
+The land material projects changed beauty tiles into a one-channel data texture
+and uses the recovered `shdrTerrain50` shimmer over the smooth palette. Tile
+coordinates are sampled in the fragment shader so merged caps and different
+zoom levels share the same field. Identical field snapshots retain the texture.
+Cast, expiry and reload update it independently of terrain mesh generation.

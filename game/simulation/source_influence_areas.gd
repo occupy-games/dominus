@@ -31,7 +31,8 @@ static func mark_radius(dirty: Dictionary,x: int,z: int,radius: int) -> void:
 
 static func advance(state: Dictionary,areas: Array,rules: Dictionary,unlocked: Callable,delta: float,activated: Array=[],force: bool=false,rebuild: bool=false) -> Array:
 	if rebuild:
-		state["raster"]["fields"]={"4":{},"6":{}}
+		state["raster"]["fields"]["4"].clear()
+		state["raster"]["fields"]["6"].clear()
 		for index in range(state["radii"].size()): state["radii"][index]=0.0
 	var events: Array=[]
 	var changed := false

@@ -15,6 +15,7 @@ func update_crops(state: Dictionary) -> void:
 func update(state: Dictionary,nodes: Dictionary) -> void:
 	var key: Array=[]
 	for home: Dictionary in state["homes"]:
+		if not nodes.has(home["id"]): continue
 		key.append([home["id"],home.get("model_id",""),nodes[home["id"]].transform,home["progress"]>=int(home.get("build_ticks",state.get("build_ticks",60)))])
 	var next := key.hash()
 	if next==signature:
@@ -23,7 +24,7 @@ func update(state: Dictionary,nodes: Dictionary) -> void:
 	signature=next
 	var groups := {}
 	for home: Dictionary in state["homes"]:
-		if home["progress"]<int(home.get("build_ticks",state.get("build_ticks",60))): continue
+		if not nodes.has(home["id"]) or home["progress"]<int(home.get("build_ticks",state.get("build_ticks",60))): continue
 		var building: Node3D=nodes[home["id"]]
 		if not building.has_method("set_stage"): continue
 		for component: Dictionary in building.components:

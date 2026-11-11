@@ -54,7 +54,7 @@ static func new_region(tile: Vector2i,width: int,sizes: Array,loaded: Callable,c
 			for x in range(maxi(0,tile.x*32-32),mini(width,tile.x*32+32)):
 				# All callbacks are pure. Reject an ineligible origin before the
 				# capacity scan; it is also a required cell of the final footprint.
-				if not loaded.call(x,z) or not eligible.call(x,z) or int(clear_capacity.call(x,z))<size: continue
+				if reserved.has(z*width+x) or not loaded.call(x,z) or not eligible.call(x,z) or int(clear_capacity.call(x,z))<size: continue
 				var half: int=size/2
 				var band := int(location.call(x+half,z+half))
 				if band<0 or band>=sizes.size() or size<int(sizes[band][0]) or size>int(sizes[band][1]): continue

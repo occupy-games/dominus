@@ -23,4 +23,11 @@ static func snapshot(state: Dictionary) -> Dictionary:
 	var result := {}
 	for resource: String in levels:
 		result[resource]=interval(state["followers"].size() if resource=="followers" else int(state.get(resource,0)),levels[resource])
+	if state.get("opening",{}).get("farming_step",-1)>=0:
+		result["wheat"]=interval(preload("res://simulation/campaign_farming.gd").field_count(state),levels["wheat"])
+	if state.get("opening",{}).get("definition",{}).has("mining_core"):
+		result["ore"]=interval(preload("res://simulation/campaign_farming.gd").field_count(state,"mine"),levels["ore"])
+	if state.has("weyworld"):
+		var counts:=preload("res://simulation/weyworld.gd").production_counts(state)
+		for resource: String in counts: result[resource]=interval(counts[resource],levels[resource])
 	return result

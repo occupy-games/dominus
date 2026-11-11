@@ -3,6 +3,8 @@ extends SceneTree
 const World = preload("res://simulation/world.gd")
 const Content = preload("res://infrastructure/campaign_content.gd")
 const Store = preload("res://infrastructure/world_store.gd")
+const Stats = preload("res://simulation/building_stats.gd")
+const SourceTerrain = preload("res://simulation/source_terrain.gd")
 var failures := 0
 
 
@@ -127,26 +129,80 @@ func run() -> void:
 	var dig_before := world.height_at(10,9)
 	world.step([{"type":"dig","x":10,"z":9}])
 	check(world.height_at(10,9)==dig_before-1,"Digging must change authoritative terrain")
-	world.step([{"type":"use_power","power":"GodPower_Beautify","x":17,"z":17}])
+	var beautify := {"type":"use_power","power":"GodPower_Beautify","x":17,"z":17}
+	var before_cast: Dictionary=world._state["homes"][0]
+	var birth_interval := Stats.birth_interval(world._state,before_cast)
+	var baseline := Stats.belief_per_cycle(world._state,before_cast)
+	var rejected := world.step([beautify])
 	# Insufficient belief rejects the cast atomically (source cost 5000).
-	check(state_of(world)["progression"]["beautified"].is_empty(),"Powers must charge the original cost and reject insufficient belief")
-	world.step([{"type":"open_chest","id":"fixture:10"},{"type":"use_power","power":"GodPower_Beautify","x":17,"z":17}])
-	check(not state_of(world)["progression"]["beautified"].is_empty(),"A funded Beautify cast must activate its simulation effect")
+	check(rejected.any(func(event: Dictionary) -> bool: return event["type"]=="rejected"),"Powers must charge the original cost and reject insufficient belief")
+	var raster: Dictionary=world._state["map_fields"]
+	check(not raster["fields"].has("1") and not raster["fields"].has("7") and not before_cast.has("beauty_fraction"),"Rejected Beautify must leave the terrain and abode samples untouched")
+	world.step([{"type":"open_chest","id":"fixture:10"},beautify])
+	var fields := preload("res://simulation/source_map_fields.gd")
+	check(fields.read(raster,1,16,16)==1.0 and fields.read(raster,1,18,18)==1.0 and fields.read(raster,1,19,17)==0.0,"The normal power command must paint the original terrain footprint")
+	check(fields.byte_at(raster,7,17,17)==40,"Beautify must store the source cell timeout")
+	var fraction := SourceTerrain.f32(9.0/793.0)
+	var modifier := SourceTerrain.f32(SourceTerrain.f32(float(before_cast["belief_modifier"]))*SourceTerrain.f32(1.0+0.5*fraction))
+	var expected_cycle := func(benefit: float) -> float:
+		return (1.0+benefit)*pow(float(before_cast["belief_multiplier"]),int(before_cast["residents"]))
+	check(before_cast.get("beauty_fraction")==fraction and not world._state["homes"][1].has("beauty_fraction"),"The area refresh must sample the nearby abode and skip the shrine")
+	check(Stats.belief_per_cycle(world._state,before_cast)==expected_cycle.call(modifier) and expected_cycle.call(modifier)>baseline,"Beautify must apply the source belief modifier to the painted fraction")
+	check(Stats.birth_interval(world._state,before_cast)==birth_interval,"Beautify must leave the normal birth interval intact")
+	var expiry := int(raster["land_effect_clock"])+1200000
 	for tick in range(81): world.step()
-	check(state_of(world)["progression"]["beautified"].is_empty(),"Timed effects must expire on simulation ticks")
+	check(world._state["tick"]>=world._state["progression"]["active_powers"]["GodPower_Beautify"] and before_cast.get("beauty_fraction")==fraction,"The casting window must end before the lasting terrain benefit")
 	world.step([{"type":"open_chest","id":"fixture:11"},{"type":"claim_card","card":"Card_TotemCapacity"}])
 	check(state_of(world)["progression"]["totem_capacity"]==9,"The original Totem Upgrade must add five follower places")
 	world.step([{"type":"tap_object","cell":8*34+11},{"type":"tap_object","cell":8*34+11}])
 	for tick in range(34): world.step()
 	check("Card_Spirituality" in state_of(world)["progression"]["discovered"],"Two rock taps plus the original delay must discover Spirituality")
+	var tick_ms := roundi(World.TICK_SECONDS*1000.0)
+	var interval := Stats.belief_interval(world._state)
+	while (int(world._state["tick"])+2*interval)*tick_ms<expiry:
+		world.step()
+	world.step([{"type":"collect","home_id":before_cast["id"]}])
+	var stored_before := float(before_cast["stored"])+float(before_cast["belief_accumulator"])
+	for tick in range(interval): world.step()
+	var actual := float(before_cast["stored"])+float(before_cast["belief_accumulator"])-stored_before
+	check(is_equal_approx(actual,expected_cycle.call(modifier)),"An occupied abode must produce the buffed belief on its next cycle")
+	check(is_equal_approx(world.inspect_building(before_cast["id"])["belief_per_hour"],expected_cycle.call(modifier)*36000.0/interval),"Building inspection must show the rate used by the simulation")
+	while (int(world._state["tick"])+1)*tick_ms<expiry:
+		world.step()
+	check(fields.byte_at(raster,7,17,17)==1 and fields.read(raster,1,17,17)==1.0,"The original terrain effect must stay active up to its final clock boundary")
 	var store := Store.new()
 	store.database_path="/private/tmp/dominus-progression-%d.sqlite3" % OS.get_process_id()
 	check(store.save_world(world.export_state()).get("ok",false),"Progression must save through SQLite, including larger JSON requests")
 	var loaded := store.load_world()
 	var clone := World.new()
 	check(clone.restore(loaded.get("data",{}),RandomNumberGenerator.new()),"Cards, chests, shrine progress and powers must restore")
-	world.step()
-	clone.step()
+	var legacy: Dictionary=loaded["data"].duplicate(true)
+	var legacy_rules: Dictionary=legacy["state"]["progression"]["rules"]
+	legacy_rules["version"]=14
+	legacy_rules.erase("abode_beauty")
+	legacy["state"]["homes"][0].erase("beauty_fraction")
+	legacy["state"]["progression"]["beautified"]=[{"x":17,"z":17,"until":expiry,"radius":1.5}]
+	var prior := World.new()
+	check(prior.restore(legacy,RandomNumberGenerator.new()),"A save with terrain effects from before abode refresh must load")
+	prior.migrate_progression(world._state["progression"]["rules"],world._state["rocks"])
+	check(prior._state["homes"][0].get("beauty_fraction")==fraction and not prior._state["progression"].has("beautified"),"Migration must rebuild the source sample from the saved terrain")
+	legacy_rules["version"]=13
+	legacy_rules["beautify_rules"].erase("timer")
+	legacy["state"]["map_fields"].erase("land_effect_clock")
+	var migrated := World.new()
+	check(migrated.restore(legacy,RandomNumberGenerator.new()),"A save with terrain effects from before the timer must load")
+	migrated.migrate_progression(world._state["progression"]["rules"],world._state["rocks"])
+	migrated.step()
+	var migrated_raster: Dictionary=migrated._state["map_fields"]
+	check(migrated_raster["land_effect_clock"]==expiry and fields.byte_at(migrated_raster,7,17,17)==1,"Migration must retain the old timer byte and start its clock without backdating expiry")
+	check(migrated._state["homes"][0].get("beauty_fraction")==fraction,"An older save must retain the painted terrain benefit when its clock starts")
+	var events := world.step()
+	check(clone.step()==events,"Reloading before the expiry tick must reproduce the original event order")
+	check(prior.step()==events and not prior._state["homes"][0].has("beauty_fraction"),"A migration with an existing clock must preserve the impending expiry")
+	var expired := events.filter(func(event: Dictionary) -> bool: return event["type"]=="land_effect_expired")
+	check(expired.size()==1 and expired[0]["cells"].size()==9,"The fixed tick must publish every expired cell in the paid footprint")
+	check(fields.byte_at(raster,7,17,17)==0 and fields.read(raster,1,17,17)==0.0,"The saved terrain effect must expire at the original clock boundary")
+	check(not before_cast.has("beauty_fraction") and Stats.belief_per_cycle(world._state,before_cast)==expected_cycle.call(float(before_cast["belief_modifier"])),"Expired terrain must release the corresponding abode belief benefit")
 	check(world.export_state()==clone.export_state(),"Restored progression must continue deterministically")
 	DirAccess.remove_absolute(store.database_path)
 	var corrupt := world.export_state()

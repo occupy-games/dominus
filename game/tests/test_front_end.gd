@@ -18,7 +18,30 @@ func check(condition: bool, message: String) -> void:
 		failures += 1
 
 
+func verify_continuation() -> void:
+	var paths := preload("res://infrastructure/save_paths.gd")
+	var previous := OS.get_environment("DOMINUS_SAVE_DIRECTORY")
+	var temporary := ProjectSettings.globalize_path("res://../build/test-continue-%d"%OS.get_process_id())
+	DirAccess.make_dir_recursive_absolute(temporary)
+	OS.set_environment("DOMINUS_SAVE_DIRECTORY",temporary)
+	check(paths.continuation()==paths.world(),"An empty save directory must retain the standard default")
+	FileAccess.open(paths.opening(),FileAccess.WRITE).close()
+	check(paths.continuation()==paths.opening(),"Continue must find an authored save when the standard save is absent")
+	await create_timer(1.05).timeout
+	FileAccess.open(paths.world(),FileAccess.WRITE).close()
+	check(paths.continuation()==paths.world(),"Continue must select a newer standard campaign save")
+	await create_timer(1.05).timeout
+	FileAccess.open(paths.opening(),FileAccess.WRITE).close()
+	check(paths.continuation()==paths.opening(),"Continue must select a newer authored campaign save")
+	DirAccess.remove_absolute(paths.opening())
+	DirAccess.remove_absolute(paths.world())
+	DirAccess.remove_absolute(temporary)
+	if previous.is_empty(): OS.unset_environment("DOMINUS_SAVE_DIRECTORY")
+	else: OS.set_environment("DOMINUS_SAVE_DIRECTORY",previous)
+
+
 func run() -> void:
+	await verify_continuation()
 	var app: Variant = FrontEnd.instantiate()
 	root.add_child(app)
 	await process_frame
@@ -76,6 +99,18 @@ func run() -> void:
 	library.leave()
 	await process_frame
 	check(app.screen.library_button != null, "Back action must restore the menu")
+	app.show_campaigns()
+	app.screen.select_map("homeworld6")
+	check(not app.screen.start_button.disabled, "Homeworld6 must be selectable from the campaign menu")
+	app.screen.start_button.pressed.emit()
+	app.session.set_process(false)
+	app.session.finish_worker()
+	var opening: Dictionary=app.session.presentation_snapshot()
+	check(opening["campaign"]["map_id"]=="homeworld6" and opening["opening"]["phase"]=="rescue", "Starting Homeworld6 must enter its original rescue")
+	check(opening["followers"].size()==2 and opening["followers"][0]["state"]=="drowning", "Campaign selection must use the two original Lua-spawned followers")
+	check(app.session.store.database_path.ends_with("homeworld6-opening.sqlite"), "The authored opening must retain its separate save path")
+	app.show_menu()
+	await process_frame
 	# Exercise a missing/unbuilt catalog without touching local source files.
 	var empty := Catalog.new()
 	empty.error_message = "Test: build the library first."
@@ -89,5 +124,7 @@ func run() -> void:
 	check(empty_view.preview_content.get_child_count() == 1, "Empty state must show setup guidance")
 	app.queue_free()
 	await process_frame
+	# AudioServer releases stopped Ogg playback on its next mixing pass.
+	await create_timer(0.1).timeout
 	print("Front-end integration: %d failures" % failures)
 	quit(1 if failures else 0)

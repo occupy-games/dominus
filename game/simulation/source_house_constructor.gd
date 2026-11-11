@@ -5,6 +5,7 @@ extends RefCounted
 const Terrain = preload("res://simulation/source_terrain.gd")
 const Biomes = preload("res://simulation/source_biomes.gd")
 const Schedule = preload("res://simulation/source_plot_schedule.gd")
+const Surroundings = preload("res://simulation/source_house_surroundings.gd")
 
 
 static func valid_rules(rules: Variant) -> bool:
@@ -81,22 +82,9 @@ static func initialize(request: Dictionary,record: Dictionary,rules: Dictionary,
 	if not request["reuse"]: events.append({"type":"source_house_occupancy","rectangle":[origin[0],origin[1],int(origin[0])+size,int(origin[1])+size]})
 	var counts := [0,0,0]
 	for object: Dictionary in nearby:
-		var kind := int(object["type"])
-		var bucket := 2 if kind>=20 else (1 if kind>=15 and kind<=19 and int(object.get("mode",0))==2 else 0)
-		counts[bucket]+=1
+		counts[Surroundings.bucket(object)]+=1
 	var radius := Terrain.f32(float(values["visionradius"]))
-	var extent := int(radius)
-	var squared := int(radius*radius)
-	var total := 0
-	var beautified := 0
-	# Preserve row/column order and the strict circular/field boundaries. These
-	# are source field samples, independent of rendered terrain or particles.
-	for dz in range(-extent,extent+1):
-		for dx in range(-extent,extent+1):
-			if dx*dx+dz*dz>=squared: continue
-			total+=1
-			if float(field.call("beauty",int(x)+dx,int(z)+dz))>float(rules["beauty_threshold"]): beautified+=1
-			field.call("blight",int(x)+dx,int(z)+dz)
+	var beauty_fraction := Surroundings.scan_beauty([x,z],radius,float(rules["beauty_threshold"]),field)
 	var weight := 0.0
 	var mine_value := 0.0
 	if not request["reuse"]:
@@ -113,7 +101,7 @@ static func initialize(request: Dictionary,record: Dictionary,rules: Dictionary,
 		"position":[x,z,height],"angle":angle,"update_after":Terrain.f32(Terrain.f32(seconds)+float(rules["update_delay"])),
 		"base_seconds":Terrain.f32(seconds),"state":0,"variant":int(request.get("extra",0)),"category":"farm" if int(request["special"])!=0 else "house",
 		"size":size,"origin":origin,"rank_weight":weight,"location":Biomes.band(int(height/Terrain.HEIGHT_SCALE),configuration)+1,
-		"created_seconds":Terrain.f32(seconds),"nearby":counts,"beauty_fraction":Terrain.f32(float(beautified)/float(total)),
+		"created_seconds":Terrain.f32(seconds),"nearby":counts,"beauty_fraction":beauty_fraction,
 		"house_index":int(record["index"]),"settlement_index":-1,"resource_flags":flags,"mine_value":mine_value,"slots":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1]}
 
 

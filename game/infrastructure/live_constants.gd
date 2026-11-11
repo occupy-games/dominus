@@ -23,7 +23,9 @@ func initialize(source_rules: Dictionary) -> void:
 		add("Card."+id+".age","Cards: "+str(card["title"]),float(card["age"]),{"category":"card","id":id,"field":"age"})
 		add("Card."+id+".number","Cards: "+str(card["title"]),float(card["number"]),{"category":"card","id":id,"field":"number"})
 		for resource: String in card["requirements"]: add("Requirement."+id+"."+resource,"Card requirements",float(card["requirements"][resource]),{"category":"requirement","id":id,"resource":resource})
-	for shrine: Dictionary in source_rules["shrines"]: add("Shrine."+shrine["id"]+".build_seconds","Shrine repair",float(shrine["build_ticks"])/10,{"category":"shrine","id":shrine["id"]})
+	for shrine: Dictionary in source_rules["shrines"]:
+		add("Shrine."+shrine["id"]+".build_seconds","Shrine repair",float(shrine["build_ticks"])/10,
+			{"category":"shrine","id":shrine["id"],"registered_scope":source_rules.get("registered_scope","")})
 	var runtime := {"sheep_speed":1.0,"build_rate":1.0,"birth_rate":1.0,"belief_rate":1.0,"sculpt_cost":1.0,"home_search_radius":4.0}
 	for key: String in runtime: add("Unit."+key,"Units",runtime[key],{"category":"runtime","key":key})
 
