@@ -9,7 +9,7 @@ import plistlib
 import re
 import shutil
 import subprocess
-import sys
+import tempfile
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -71,6 +71,93 @@ def relocate(resources,mapping):
         if '/opt/' in text or '/Users/' in text:raise ValueError('Nonrelocatable runtime: '+str(binary))
 
 
+def copy_project(source, resources):
+    def ignores(folder, names):
+        excluded = {name for name in names
+                    if name in {'.DS_Store', '.godot', '__pycache__', 'tests'}
+                    or name.endswith(('.pyc', '.import'))}
+        if Path(folder) == source / 'game/assets':
+            excluded.update({'extracted', 'library', 'original'})
+        return excluded
+
+    for name in ('game', 'tools', 'assets', 'config', 'bootstrap'):
+        target = resources / name
+        if target.exists():
+            shutil.rmtree(target)
+    for name in ('game', 'tools', 'assets'):
+        shutil.copytree(source / name, resources / name, ignore=ignores)
+    recipe = hashlib.sha256()
+    for path in sorted((resources / 'tools').glob('*.py')):
+        recipe.update(path.name.encode())
+        recipe.update(path.read_bytes())
+    recipe.update((resources / 'assets/selection.json').read_bytes())
+    (resources / 'content-recipe.json').write_text(json.dumps({'sha256': recipe.hexdigest()}))
+    (resources / 'config').mkdir()
+    for name in ('settings.defaults.json', 'asset_source.json', 'Adobes.csv', 'Followers.csv', 'Update.csv'):
+        shutil.copy2(source / 'config' / name, resources / 'config' / name)
+    bootstrap = resources / 'bootstrap'
+    shutil.copytree(source / 'packaging/bootstrap', bootstrap, ignore=ignores)
+    shutil.copy2(source / 'game/presentation/menu/content_setup.gd', bootstrap / 'setup.gd')
+    (bootstrap / 'infrastructure').mkdir(exist_ok=True)
+    shutil.copy2(source / 'game/infrastructure/content_setup.gd', bootstrap / 'infrastructure/content_setup.gd')
+    shutil.copy2(source / 'game/assets/fonts/RobotoCondensed-Regular.ttf', bootstrap / 'RobotoCondensed-Regular.ttf')
+    shutil.copy2(source / 'game/assets/dominus.icns', resources / 'Dominus.icns')
+
+
+def package_app(stage, app, output, version, commit=None):
+    resources = app / 'Contents/Resources'
+    minimum_system = minimum_macos(resources)
+    info = dict(CFBundleName='Dominus', CFBundleDisplayName='Dominus', CFBundleIdentifier='com.dominus.game',
+                CFBundleExecutable='Dominus', CFBundlePackageType='APPL', CFBundleShortVersionString=version,
+                CFBundleVersion=version, CFBundleIconFile='Dominus.icns', LSMinimumSystemVersion=minimum_system,
+                NSHighResolutionCapable=True)
+    (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
+    bootstrap = resources / 'bootstrap'
+    execute(resources / 'engine', '--headless', '--path', bootstrap, '--editor', '--import',
+            '--log-file', stage / 'bootstrap-import.log')
+    check = subprocess.run([resources / 'engine', '--headless', '--path', bootstrap, '--script', 'res://setup.gd',
+                            '--check-only', '--log-file', stage / 'bootstrap-check.log'],
+                           check=True, text=True, capture_output=True)
+    for error in ('SCRIPT ERROR:', 'No loader found', 'Failed to load'):
+        if error in check.stdout + check.stderr:
+            raise ValueError('Invalid setup project:\n' + check.stdout + check.stderr)
+    execute('/usr/bin/codesign', '--force', '--deep', '--sign', '-', '--timestamp=none', app)
+    execute('/usr/bin/codesign', '--verify', '--deep', '--strict', app)
+    output.mkdir(parents=True, exist_ok=True)
+    package = output / f'Dominus-{version}-arm64.pkg'
+    execute('pkgbuild', '--root', stage / 'payload', '--identifier', 'com.dominus.game',
+            '--version', version, '--install-location', '/', package)
+    entries = subprocess.check_output(['pkgutil', '--payload-files', package], text=True).splitlines()
+    external = ('game/assets/original', 'game/assets/extracted', 'game/assets/library', 'data', 'saves')
+    for entry in entries:
+        path = entry.partition('/Contents/Resources/')[2].rstrip('/')
+        if entry.endswith(('.7z', '.sqlite3')) or any(path == name or path.startswith(name + '/') for name in external):
+            raise ValueError('External data in installer: ' + entry)
+    with package.open('rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    manifest = dict(package=package.name, bytes=package.stat().st_size, sha256=digest, external_content_included=False,
+                    architecture='arm64', minimum_macos=minimum_system, installer_signed=False,
+                    application_signature='ad-hoc', version=version)
+    if commit:
+        manifest['source_commit'] = commit
+    (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    print(json.dumps(manifest, indent=2), flush=True)
+    return app, package
+
+
+def build_from_runtime(runtime_package, source, output, version, commit):
+    with tempfile.TemporaryDirectory(prefix='dominus-package-') as directory:
+        stage = Path(directory)
+        expanded = stage / 'runtime'
+        execute('pkgutil', '--expand-full', runtime_package, expanded)
+        applications = stage / 'payload/Applications'
+        applications.mkdir(parents=True)
+        app = applications / 'Dominus.app'
+        shutil.move(expanded / 'Payload/Applications/Dominus.app', app)
+        copy_project(source.resolve(), app / 'Contents/Resources')
+        return package_app(stage, app, output, version, commit)[1]
+
+
 def build(output,version):
     source_specs=json.loads((ROOT/'config/distribution_sources.json').read_text())
     source_cache=ROOT/'build/reference/sources';source_cache.mkdir(parents=True,exist_ok=True)
@@ -86,25 +173,7 @@ def build(output,version):
     app=stage/'payload/Applications/Dominus.app'
     resources=app/'Contents/Resources';macos=app/'Contents/MacOS'
     resources.mkdir(parents=True,exist_ok=True);macos.mkdir(exist_ok=True)
-    def ignores(folder,names):
-        excluded={name for name in names if name in ['.godot','__pycache__','tests'] or name.endswith(('.pyc','.import'))}
-        if Path(folder).resolve()==(ROOT/'game/assets').resolve():excluded.update({'extracted','library','original'})
-        return excluded
-    for name in ['game','tools','assets']:
-        shutil.copytree(ROOT/name,resources/name,ignore=ignores)
-    recipe=hashlib.sha256()
-    for path in sorted((resources/'tools').glob('*.py')):recipe.update(path.name.encode());recipe.update(path.read_bytes())
-    recipe.update((resources/'assets/selection.json').read_bytes())
-    (resources/'content-recipe.json').write_text(json.dumps({'sha256':recipe.hexdigest()}))
-    (resources/'config').mkdir()
-    for name in ['settings.defaults.json','asset_source.json','Adobes.csv','Followers.csv','Update.csv']:
-        shutil.copy2(ROOT/'config'/name,resources/'config'/name)
-    shutil.copytree(ROOT/'packaging/bootstrap',resources/'bootstrap')
-    shutil.copy2(ROOT/'game/presentation/menu/content_setup.gd',resources/'bootstrap/setup.gd')
-    (resources/'bootstrap/infrastructure').mkdir(exist_ok=True)
-    shutil.copy2(ROOT/'game/infrastructure/content_setup.gd',resources/'bootstrap/infrastructure/content_setup.gd')
-    shutil.copy2(ROOT/'game/assets/fonts/RobotoCondensed-Regular.ttf',resources/'bootstrap/RobotoCondensed-Regular.ttf')
-    shutil.copy2(ROOT/'game/assets/dominus.icns',resources/'Dominus.icns')
+    copy_project(ROOT, resources)
     shutil.copy2('/Applications/Godot.app/Contents/MacOS/Godot',resources/'engine')
     dependencies=resources/'dependencies'
     (dependencies/'bin').mkdir(parents=True);(dependencies/'share').mkdir()
@@ -138,11 +207,6 @@ def build(output,version):
     launcher=macos/'Dominus'
     launcher.write_text('#!/bin/sh\nset -eu\nunset PYTHONHOME PYTHONPATH\nexport PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\nRES="$(CDPATH= cd -- "$(dirname -- "$0")/../Resources" && pwd)"\nexec "$RES/python/bin/python3" "$RES/tools/launch_distribution.py" "$@"\n')
     launcher.chmod(0o755)
-    minimum_system=minimum_macos(resources)
-    info=dict(CFBundleName='Dominus',CFBundleDisplayName='Dominus',CFBundleIdentifier='com.dominus.game',CFBundleExecutable='Dominus',
-              CFBundlePackageType='APPL',CFBundleShortVersionString=version,CFBundleVersion=version,CFBundleIconFile='Dominus.icns',
-              LSMinimumSystemVersion=minimum_system,NSHighResolutionCapable=True)
-    (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     license_dir=resources/'licenses';license_dir.mkdir()
     license_sources=[Path('/Applications/Godot.app/Contents/Resources'),python_prefix, image_prefix,
                      ROOT/'build/reference/ww2ogg-master',ROOT/'build/reference/revorb-master',Path('/opt/local/share/doc/p7zip')]
@@ -173,18 +237,12 @@ def build(output,version):
     execute(resources/'engine','--headless','--path',resources/'bootstrap','--script',ROOT/'tools/export_engine_licenses.gd','--check-only','--log-file',stage/'license-parse.log')
     execute(resources/'engine','--headless','--path',resources/'bootstrap','--script',ROOT/'tools/export_engine_licenses.gd','--log-file',stage/'license-export.log','--',license_dir/'engine')
     (license_dir/'COMPONENTS.txt').write_text('Dominus bundles the Godot engine, CPython, 7-Zip, ImageMagick, ww2ogg and revorb and their dynamically linked open-source runtime dependencies. External game content is downloaded separately and is not part of this installer.\n')
-    execute(resources/'engine','--headless','--path',resources/'bootstrap','--editor','--import','--log-file',stage/'bootstrap-import.log')
-    execute('/usr/bin/codesign','--force','--deep','--sign','-','--timestamp=none',app)
-    output.mkdir(parents=True,exist_ok=True)
-    package=output/f'Dominus-{version}-arm64.pkg'
-    execute('pkgbuild','--root',stage/'payload','--identifier','com.dominus.game','--version',version,'--install-location','/',package)
-    manifest=dict(package=package.name,bytes=package.stat().st_size,sha256=hashlib.sha256(package.read_bytes()).hexdigest(),
-                  external_content_included=False,architecture='arm64',minimum_macos=minimum_system,installer_signed=False,application_signature='ad-hoc',version=version)
-    (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    print(json.dumps(manifest,indent=2))
-    return app,package
+    return package_app(stage, app, output, version)
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path,default=ROOT/'dist');parser.add_argument('--version',default='0.1.1')
-    args=parser.parse_args();build(args.output,args.version)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, default=ROOT / 'dist')
+    parser.add_argument('--version', default='0.1.1')
+    args = parser.parse_args()
+    build(args.output, args.version)

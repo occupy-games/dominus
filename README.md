@@ -73,6 +73,11 @@ Build an installer on the configured macOS development machine:
 python3 tools/package_macos.py
 ```
 
+GitHub Actions publishes an Apple Silicon installer and its checksum manifest
+for each commit on `main`, starting with 0.1.1. It builds any pending commits
+in order and reuses the verified runtime from the 0.1.0 release. Each manifest
+records the commit used for that installer.
+
 After local content setup, run checks:
 
 ```sh
