@@ -37,6 +37,25 @@ func apply_snapshot(snapshot: Dictionary,lesson_prompt: Dictionary={}) -> void:
 	current={}
 	var active_messages: Array = opening["messages"].duplicate(true)
 	var tips := {}
+	var village: Dictionary=snapshot.get("astari_village",{})
+	if not village.is_empty():
+		var festival_id:=-2147483645
+		if not village["festival"].is_empty():
+			var village_rules: Dictionary=opening["definition"]["astari_village"]
+			tips[festival_id]={"text":village_rules["notices"]["start"],"pos2d":{"1":0.5,"2":0.13}}
+		elif not village["notice"].is_empty():
+			tips[festival_id]={"text":village["notice"]["text"],"gui":"HappinessFace","gui_info":1}
+		if tips.has(festival_id): active_messages.append({"id":festival_id,"callback":null})
+	var notice: Dictionary=opening.get("astari_raid",{}).get("notice",{})
+	if not notice.is_empty():
+		var rules: Dictionary=opening["definition"]["astari_raids"]
+		var alert_id := -2147483647
+		var tip_id := alert_id+1
+		tips[alert_id]={"text":rules["alert"],"pos2d":{"1":0.5,"2":0.1}}
+		tips[tip_id]={"text":rules["tip"],"pos3d":{"1":notice["x"],"2":notice["z"],
+			"height":float(rules["tip_height"])-float(snapshot["source_map"]["sea_level"])*0.3}}
+		active_messages.append({"id":alert_id,"callback":null})
+		active_messages.append({"id":tip_id,"callback":null})
 	for key: String in opening.get("tips",{}):
 		var tip: Dictionary = opening["tips"][key]
 		if tip.has("position"):

@@ -6,6 +6,20 @@ const Store = preload("res://infrastructure/world_store.gd")
 var failures := 0
 
 
+class Terrace extends RefCounted:
+	var heights: Dictionary
+	var summit := Vector2i(13,10)
+
+	func _occupied(x: int,z: int) -> bool:
+		return not heights.has(Vector2i(x,z))
+
+	func height_at(x: int,z: int) -> int:
+		return heights.get(Vector2i(x,z),0)
+
+	func can_act_at(x: int,z: int) -> bool:
+		return Vector2i(x,z)!=summit
+
+
 func _initialize() -> void:
 	create_timer(120).timeout.connect(func() -> void: quit(1))
 	run.call_deferred()
@@ -13,6 +27,31 @@ func _initialize() -> void:
 
 func check(value: bool,message: String) -> void:
 	if not value: failures+=1; push_error(message)
+
+
+func verify_physical_ramp() -> void:
+	var terrace:=Terrace.new()
+	for x in range(10,14): terrace.heights[Vector2i(x,10)]=1
+	terrace.heights[terrace.summit]=8
+	var state:={"width":32,"belief":100,"opening":{"events_step":1,"definition":{"coastal_free_band":{"min":19,"max":63}}}}
+	var start:=Vector2i(10,10)
+	var player:=Player.new()
+	check(player.sculpt_route(terrace,state,start,terrace.summit,3,8).is_empty(),
+		"Three cells cannot reach a terrace seven layers higher by editing the same tile twice")
+	for z in range(11,14):
+		terrace.heights[Vector2i(10,z)]=1
+		terrace.heights[Vector2i(13,z)]=1
+	for x in range(11,13): terrace.heights[Vector2i(x,13)]=1
+	var path:=player.sculpt_route(terrace,state,start,terrace.summit,3,8)
+	check(path.size()==9 and path.back()==Vector3i(13,10,8),"A longer route must connect to the summit at its actual height")
+	var seen:={start:true}
+	var last:=Vector3i(start.x,start.y,1)
+	for step: Vector3i in path:
+		var cell:=Vector2i(step.x,step.y)
+		check(not seen.has(cell) and absi(last.x-step.x)+absi(last.y-step.y)==1 and absi(last.z-step.z)<=1,
+			"A ramp must use adjacent distinct cells with walkable height changes")
+		seen[cell]=true
+		last=step
 
 
 func verify_stranded_builder(source: Dictionary) -> void:
@@ -27,6 +66,7 @@ func verify_stranded_builder(source: Dictionary) -> void:
 	check(world._route(Vector2i(15,16),Vector2i(18,16)).is_empty(),"The stranded-Builder fixture must have a real impassable cliff")
 	var snapshot := world.snapshot(false)
 	snapshot["opening"]={"definition":source,"submerged_levels":{}}
+	snapshot["progression"]={"influence_revision":0}
 	var before := world.export_state()
 	var command := Player.new().grow_promised_land(world,snapshot)
 	check(world.export_state()==before,"Finding a Builder connection must preserve simulation state and RNG")
@@ -38,6 +78,7 @@ func verify_stranded_builder(source: Dictionary) -> void:
 
 func run() -> void:
 	var definition := preload("res://infrastructure/campaign_opening_content.gd").definition()
+	verify_physical_ramp()
 	verify_stranded_builder(definition["story"])
 	var world := World.new()
 	var random := RandomNumberGenerator.new()

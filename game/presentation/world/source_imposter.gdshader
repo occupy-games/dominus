@@ -20,5 +20,5 @@ void fragment() {
     vec4 sample_=texture(source_texture,UV);
     if(sample_.a<0.65) discard;
     vec3 color=(trunk_color.rgb*sample_.r+foliage_color.rgb*sample_.g)*2.4;
-    ALBEDO=god_influence_color(color,source_position.xz);
+    ALBEDO=god_influence_color(color*COLOR.rgb,source_position.xz);
 }

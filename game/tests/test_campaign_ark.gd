@@ -1,6 +1,7 @@
 extends SceneTree
 
 const World = preload("res://simulation/world.gd")
+const Astari = preload("res://simulation/campaign_astari.gd")
 var failures := 0
 
 
@@ -23,10 +24,14 @@ func run() -> void:
 	var state: Dictionary=world._state
 	var p: Dictionary=state["progression"]
 	var opening: Dictionary=state["opening"]
+	var conquest_card:={"type":"claim_card","card":"Card_AstariConquered"}
 	opening.merge({"phase":"discovery","discovery_step":2,"pit_step":1,"leash_step":2,"messages":[]},true)
 	opening["leash_level_card"]=opening["definition"]["leash_population_card"]["id"]
 	opening["globals"]["onStartPlayTriggered"]=true
 	p["script_unlocks"]={"Leash":true,"OreSpending":true}
+	preload("res://simulation/campaign_farming.gd").place_authored_fields(world,state)
+	var village: Dictionary=state["astari_village"]
+	check(Astari.population(state)==250 and village["homes"].size()==7,"The original village must have its 250 residents and seven sites")
 	var builder: Dictionary=state["followers"][0]
 	builder.merge({"x":306.0,"z":317.0,"state":"idle","profession":"miner"},true)
 	world.step()
@@ -35,8 +40,9 @@ func run() -> void:
 	for tick in range(60): world._advance_source_influence([])
 	world.step()
 	var progress: Dictionary=opening.get("ark_progress",{})
-	check(not progress.is_empty() and not progress.has("festival_until"),"The source village scan must reject a Miner")
+	check(not progress.is_empty() and village["festival"].is_empty(),"The source village scan must reject a Miner")
 	check(not world.source_plot_eligible(327,310),"The powers-only village influence must not unlock the beacon")
+	check(not world.inspect(conquest_card)["ok"],"The conquest advance must stay locked while the Astari own their village")
 	if failures: quit(1); return
 	builder.erase("profession")
 	state["belief"]=100
@@ -45,16 +51,29 @@ func run() -> void:
 	world.step([leash])
 	state["tick"]=int(progress["next_scan"])-1
 	var events:=world.step()
-	check(events.any(func(event: Dictionary) -> bool: return event["type"]=="campaign_astari_festival_started") and progress["festival_until"]-state["tick"]==300,"The original builder scan must start the 30-second forced festival")
-	check(p["happiness"]["player"]>0.99 and p["happiness"]["astari"]==0,"The forced festival must apply the original happiness swing")
+	check(events.any(func(event: Dictionary) -> bool: return event["type"]=="campaign_astari_festival_started") and village["festival"].get("until",0)-state["tick"]==300,"The original builder scan must start the 30-second forced festival")
+	check(p["happiness"]["player"]>0.99 and absf(float(p["happiness"]["astari"])+0.75)<0.001,"The original adjustment sets Astari mood to minus one before the festival boost")
 	if failures: quit(1); return
-	state["tick"]=int(progress["festival_until"])-2
+	state["tick"]=int(village["festival"]["until"])-2
 	world.step()
 	check(not p["script_unlocks"].has("winAstari"),"The village must remain locked until the festival ends")
+	state["enemies"]=[{"kind":"astari_archer","health":100,"state":"idle","x":307.0,"z":317.0}]
+	var ending:=world.step()
+	check(ending.any(func(event: Dictionary) -> bool: return event["type"]=="campaign_astari_festival_ended" and event["converted"]==250),
+		"The forced festival must convert the 250 actual villagers")
+	check(state["followers"].size()==252 and Astari.population(state)==1 and not village["captured"],
+		"The army must remain hostile until its last living archer is removed")
+	state.erase("enemies")
 	world.step()
+	check(village["captured"] and village["homes"].is_empty() and state["homes"].any(func(home: Dictionary) -> bool:
+		return home.get("kind")=="village" and home.get("allegiance")==0),"The empty rival village must transfer to player ownership")
 	for tick in range(60): world._advance_source_influence([])
 	world.step()
 	check(world.source_plot_eligible(327,310) and "Card_AstariConquered" in p["discovered"],"Taking over the village must expose the original beacon and grant its card")
+	check(preload("res://simulation/source_unlocks.gd").enabled(p,"ConqueredAstari"),"Conquest must enable the original village claim condition")
+	check(world.inspect(conquest_card)["ok"],"The conquest advance must be claimable without stickers")
+	world.step([conquest_card,conquest_card])
+	check(p["completed"].count(conquest_card["card"])==1,"Claiming the conquest advance must complete it once")
 	var ark: Dictionary=world.source_shrine_site("1036")
 	var start:={"type":"repair_shrine","id":ark["id"]}
 	var other: Dictionary=state["followers"][1]

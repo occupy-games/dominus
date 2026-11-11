@@ -80,11 +80,18 @@ migration preserves saved CSV values and prior rewards. Reloading CSV balance
 preserves field identity and construction progress instead of applying abode
 statistics to fields.
 
+Homeworld6 recovers four paid upgrade levels for each Builder, Farming and
+Mining Settlement power. The original config modifiers expand the compression
+radius and population limit. Existing settlements gain the worker slots listed
+in the original upgrade details. Each purchase spends its source currency and
+saves the corresponding unlock. The placement preview uses the same radius
+as the simulation's compression query.
+
 ## Remaining fidelity work
 
 This is not complete original campaign progression. Settlement geometry
 compression, expanding/merging communities, breeder/buffer assignment, worker
-fatigue, the full source biome rules and all settlement upgrades still need
+fatigue, the full source biome rules and upgrades outside Homeworld6 still need
 ports and original-game comparison. Current communities preserve the existing
 abode layouts. Automatic deployment now chooses the largest reachable, affordable
 source field or mine footprint; clearing more flat space makes larger plots viable.
@@ -207,9 +214,15 @@ membership and the private Homeworld6 first-abode stage remain unported.
 
 ## Storm chest recovery
 
-The current runtime has fixed campaign chests and voyage rewards. It still lacks
-the original storm-end replenishment loop, which is a real resource scarcity
-gap. `tools/storm_chests.py` preserves the archive/executable hashes, source area
+Homeworld6 uses fixed campaign chests, voyage rewards and regular storm-end
+replenishment. Discovering Farming enables the original two-day storm schedule
+and chance roll at the configured time of day. The fixed-tick adapter invokes
+replenishment once the active duration ends. Saved storms retain their countdown
+and generated chests keep distinct IDs. The campaign uses its occupancy grid for
+scenery and building clearance. Original custom shapes, weather presentation
+and offline storm scheduling remain open.
+
+`tools/storm_chests.py` preserves the archive/executable hashes, source area
 tables, original native routines and numeric configuration. Three source scopes
 provide explicit `maxStormChests`, `maxDepth` and `maxTotalChests` columns. Older
 schemas remain unavailable here until their loader behavior is verified.
@@ -231,10 +244,8 @@ The isolated original CPU comparisons cover 53 refill cases, 10 disk samples
 and 15 generation batches, including boundaries, overlap, lock/activation gates,
 authored IDs, opening phases, caps, retries, zero counts, depth rounding and intervening random
 consumption. They adapt spatial candidate acceptance and chest construction;
-they do not prove the full placement predicate, source constructor, storm
-scheduling, offline weather behavior or renewable chests in a played campaign.
-The authored campaign infrastructure injects the recovered limits as plain data;
-the remaining original services must be ported before enabling the runtime loop.
+these isolated cases cover the budget and sampler independently of the
+Homeworld6 fixed-tick integration.
 
 The candidate predicate (`0x101521e0`) now has a separate pure port in
 `source_chest_placement.gd`. It retains both original category/restriction gates,
@@ -259,8 +270,8 @@ invented sticker reward. The core constructor runs before generated source-ID/re
 assignment, followed by notification at the constructor's actual stored position.
 Forty-three original CPU cases verify type boundaries, story probability,
 allocation failure, constructor RNG ordering and changed final positions.
-Source story/sticker/gem redemption and storm scheduling still need
-their runtime implementations before these protocols can replenish a campaign.
+The Homeworld6 adapter credits selected stickers and gems, and records storm
+story rewards through the original story table and fallback selector.
 
 `source_chest_constructor.gd` now implements the numeric constructor state from
 `0x101523c0`. It samples ground separately from the factory's classification
@@ -281,9 +292,8 @@ creation, the independent ground samples, final notification position and no
 construction after allocation failure. Headless checks validate exact numeric
 save-codec round trips, detached restored records, matching spatial ownership,
 rejection of malformed saved values and continuation of the injected RNG.
-These checks do not establish chest opening/disappearance transitions, custom
-scenery membership, source reward redemption or storm scheduling. The runtime
-renewable loop remains disabled until those services are available.
+The constructor checks cover allocation and initial state. The separate
+lifetime and campaign checks cover subsequent stages.
 
 The field distinction is retained explicitly in recovered `field_layout`
 metadata: the authored loader at `0x102617a1` writes the reward-chest `ID` into
@@ -322,7 +332,5 @@ or release are adapters; timers, height response, gates, destructor ID writes an
 pool traversal execute original instructions. Headless checks repeat every case
 with save/restore between every transition, verify a single reward transition
 through that boundary and validate rejected duplicate identities or malformed state. They
-also exercise the ordinary opening command. Actual reward availability
-(`0x10001600`), reward redemption (`0x100514f0`), custom scenery shapes and storm
-scheduling remain unported dependencies of the renewable runtime loop. Lifecycle
-dispatch tests do not prove sticker selection or a complete played campaign.
+also exercise the ordinary opening command. Separate campaign tests cover
+storm scheduling, the original reward selectors and saves with generated chests.

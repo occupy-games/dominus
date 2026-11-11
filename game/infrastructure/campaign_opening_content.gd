@@ -16,28 +16,38 @@ static func definition() -> Dictionary:
 	var mud_hut_group: String=mud_hut["raw"]["Model Name"]+".group.bin"
 	var mud_lodge: Dictionary=houses["records"]["AbodeType_1_Rank_2"]
 	var mud_lodge_group: String=mud_lodge["raw"]["Model Name"]+".group.bin"
+	var beach_lodge: Dictionary=houses["records"]["AbodeType_1_Rank_3"]
+	var beach_lodge_group: String=beach_lodge["raw"]["Model Name"]+".group.bin"
 	var timeline_steps: Array=story.get("timeline_steps",[])
 	var script_type := int(timeline_steps[4].get("abode_type",-1)) if timeline_steps.size()>4 else -1
 	var fountain: Dictionary=story.get("fountain",{})
 	var fountain_model_found:=false
 	var collector: Dictionary=story.get("belief_collector",{})
 	var collector_model_found:=false
+	var capacity: Dictionary=story.get("capacity_shrine",{})
+	var capacity_model_found:=false
+	var speed_shrine: Dictionary=story.get("speed_shrine",{})
+	var speed_model_found:=false
 	for model: Dictionary in preload("res://infrastructure/asset_catalog.gd").model_records().get("models",[]):
 		if model.get("building_assembly",{}).is_empty(): continue
 		if model["id"]==fountain.get("model",""): fountain_model_found=true
 		if model["id"]==collector.get("model",""): collector_model_found=true
+		if model["id"]==capacity.get("model","") and model.get("source_sha256")==capacity.get("model_sha256"): capacity_model_found=true
+		if model["id"]==speed_shrine.get("model","") and model.get("source_sha256")==speed_shrine.get("model_sha256"): speed_model_found=true
 		if model["id"]==first_model: story["first_abode_model"]=first_model
 		if script_type>=0 and model["source"]==mud_hut_group and model["name"]=="rank1_loc1_var1_storey1":
 			story["mud_hut"]={"source_id":"AbodeType_1_Rank_1","model_id":model["id"],"values":mud_hut["values"].duplicate(true),"name":mud_hut["raw"]["House Name"],"script_type":script_type}
 		if script_type>=0 and model["source"]==mud_lodge_group and model["name"]=="rank2_loc1_var1_storey1":
 			story["mud_lodge"]={"model_id":model["id"],"values":mud_lodge["values"],"name":mud_lodge["raw"]["House Name"],"script_type":script_type,"rank":2,"family":1}
+		if script_type>=0 and model["source"]==beach_lodge_group and model["name"]=="rank3_loc1_var1_storey1":
+			story["beach_lodge"]={"model_id":model["id"],"values":beach_lodge["values"],"name":beach_lodge["raw"]["House Name"],"script_type":script_type,"rank":3,"family":1}
 		for rank in range(1,5):
 			var id: String="AbodeType_%d_Rank_%d"%[2 if rank<=2 else 3,rank]
 			var row: Dictionary=houses["records"][id]
 			if model["source"]==row["raw"]["Model Name"]+".group.bin" and model["name"]=="rank%d_loc1_var1_storey1"%rank:
 				if not story.has("wooden_abodes"): story["wooden_abodes"]={}
 				story["wooden_abodes"][id]={"model_id":model["id"],"name":row["raw"]["House Name"],"values":row["values"],"rank":rank}
-		for rank in [5,6]:
+		for rank in range(3,7):
 			var id: String="StoneHouse_Rank_%d"%rank
 			var row: Dictionary=houses["records"][id]
 			if model["source"]==row["raw"]["Model Name"]+".group.bin" and model["name"]=="rank%d_loc1_var1_storey1"%rank:
@@ -73,6 +83,10 @@ static func definition() -> Dictionary:
 	var storm_chests := preload("res://infrastructure/storm_chests.gd").load_content(story["day_cycle"]["executable_sha256"],story["source_sha256"])
 	if storm_chests.is_empty() or not storm_chests["scopes"].get(story["scope"],{}).get("available",false): return {}
 	story["storm_chest_rules"]=storm_chests["rules"].duplicate(true)
+	story["storm_timing"]={}
+	for key: String in ["StormRegularity","StormTimeOfDay","StormLikelihood","stormLengthMin","stormLengthMax","ChestWidth"]:
+		story["storm_timing"][key]=storm_chests["configuration"].get(key)
+	if not preload("res://simulation/campaign_storms.gd").valid_rules(story["storm_timing"]): return {}
 	story["chest_placement_rules"]=storm_chests["placement_rules"].duplicate(true)
 	story["chest_factory_rules"]=storm_chests["factory_rules"].duplicate(true)
 	story["chest_core_rules"]=storm_chests["core_rules"].duplicate(true)
@@ -134,6 +148,11 @@ static func definition() -> Dictionary:
 	if story["progression_modifier_rules"].is_empty(): return {}
 	story["reward_dispatch_rules"]=preload("res://infrastructure/reward_dispatch.gd").load_rules(story["day_cycle"]["executable_sha256"],story["source_sha256"])
 	if story["reward_dispatch_rules"].is_empty(): return {}
+	story["chest_stories"]=[]
+	for row: Array in story["tables"].get(story["scope"]+"/storypieces.csv",[]).slice(1):
+		if row.size()<5 or str(row[0]).begins_with("#"): continue
+		var id := preload("res://simulation/source_hash.gd").text(row[0])
+		story["chest_stories"].append({"id":id,"essential":int(row[2]),"order":int(row[4]),"localization":row[1]})
 	story["unlock_dispatch"]=preload("res://infrastructure/unlock_dispatch.gd").content(story["day_cycle"]["executable_sha256"],story["source_sha256"],story["scope"])
 	if story["unlock_dispatch"].is_empty(): return {}
 	var reward_queue := preload("res://infrastructure/reward_queue.gd").content(story["day_cycle"]["executable_sha256"],story["source_sha256"])
@@ -196,13 +215,58 @@ static func definition() -> Dictionary:
 	data["rock_field"]=scenery["rock_field"]
 	data["source_scenery"]=scenery["provenance"]
 	story["rock_objects"]=scenery["rocks"]
+	var forest := god_seed_rules(story,houses,scenery["provenance"])
+	if not forest.is_empty():
+		story["messages"].merge(forest["messages"])
+		forest.erase("messages")
+		story["god_seed"]=forest
+	var finger := finger_rules(story)
+	if not finger.is_empty():
+		story["messages"].merge(finger["messages"])
+		finger.erase("messages")
+		story["finger_of_god"]=finger
 	var rules: Dictionary = preload("res://infrastructure/progression_content.gd").rules(data)
+	var village:=astari_village_rules(story,rules)
+	if not village.is_empty(): story["astari_village"]=village
+	if story.has("god_seed"):
+		var advance: Dictionary=rules.get("research_cards",{}).get(story["god_seed"]["card"],{})
+		if advance.get("research_needed",-1)!=0: return {}
+	if story.has("finger_of_god"):
+		var advance: Dictionary=rules.get("research_cards",{}).get(finger["card"],{})
+		if advance.get("research_type")!="FAITH" or advance.get("research_needed")!=0: story.erase("finger_of_god")
+		else:
+			var raids:=astari_raid_rules(story)
+			if not raids.is_empty(): story["astari_raids"]=raids
 	if not collector.is_empty():
 		if not preload("res://simulation/campaign_belief_collector.gd").valid_rules(collector) or not rules["research_cards"].has(collector["card"]): return {}
 		if not collector_model_found: story.erase("belief_collector")
+	if not capacity.is_empty():
+		if not preload("res://simulation/campaign_capacity_shrine.gd").valid_rules(capacity) or not rules["research_cards"].has(capacity["card"]): return {}
+		if not capacity_model_found: story.erase("capacity_shrine")
+	if not speed_shrine.is_empty():
+		if not preload("res://simulation/campaign_speed_shrine.gd").valid_rules(speed_shrine): return {}
+		var recipe: Dictionary=rules["research_cards"].get(speed_shrine["card"],{})
+		if recipe.get("research_type")!="SOCIAL" or recipe.get("research_needed")!=12: return {}
+		if not speed_model_found: story.erase("speed_shrine")
+	if story.has("settlement_upgrades") and not preload("res://simulation/campaign_settlement_upgrades.gd").valid_rules(story["settlement_upgrades"]): return {}
 	if story.has("cliff_sculpt"):
 		var cliff: Dictionary=story["cliff_sculpt"]
 		if not preload("res://simulation/campaign_cliff_sculpt.gd").valid_rules(cliff) or not rules["research_cards"].has(cliff["card"]): return {}
+	if story.has("underwater_sculpt"):
+		var water: Dictionary=story["underwater_sculpt"]
+		if not preload("res://simulation/source_underwater_sculpt.gd").valid_rules(water): return {}
+		var recipe: Dictionary=rules["research_cards"].get(water["card"],{})
+		if recipe.get("research_type")!="FAITH" or recipe.get("research_needed")!=12: return {}
+	if story.has("swamp"):
+		var swamp: Dictionary=story["swamp"]
+		if not preload("res://simulation/source_swamp.gd").valid_rules(swamp): return {}
+		var recipe: Dictionary=rules["research_cards"].get(swamp["card"],{})
+		if recipe.get("research_type")!="FAITH" or recipe.get("research_needed")!=0: return {}
+	if story.has("meteor"):
+		var meteor: Dictionary=story["meteor"]
+		if not preload("res://simulation/campaign_meteor.gd").valid_rules(meteor): return {}
+		var recipe: Dictionary=rules["research_cards"].get(meteor["card"],{})
+		if recipe.get("research_type")!="FAITH" or recipe.get("research_needed")!=0: return {}
 	if not fountain.is_empty():
 		if not preload("res://simulation/campaign_fountain.gd").valid_rules(fountain) or not rules["research_cards"].has(fountain["card"]): return {}
 		if not fountain_model_found: story.erase("fountain")
@@ -230,37 +294,42 @@ static func definition() -> Dictionary:
 		"Card_GenerateBelief":"shrine_population_card","Card_Adv_Leash_1":"leash_population_card","Card_Settlement_Farming":"farming_population_card",
 		"Card_Settlement_Mine":"mining_population_card"}
 	story["housing_advances"]=[]
+	story["sticker_advances"]=[]
+	story["environment_advances"]=[]
 	for row: Array in levels:
 		if row.size()<2 or not str(row[0]).is_valid_int() or str(row[1]).is_empty(): continue
 		ordinal+=1
 		var source_id: String=row[1]
 		var housing: bool=source_id in ["Card_AbodeType2_Rank1","Card_AbodeType2_Rank2"] and story.get("wooden_abodes",{}).has("AbodeType_2_Rank_"+source_id.right(1))
 		housing=housing or source_id=="Card_AbodeType1_Rank2" and story.has("mud_lodge")
-		if not milestones.has(source_id) and not housing: continue
+		housing=housing or source_id=="Card_AbodeType1_Rank3" and story.has("beach_lodge")
+		housing=housing or source_id in ["Card_AbodeType3_Rank3","Card_AbodeType3_Rank4"] and story.get("stone_abodes",{}).has("StoneHouse_Rank_"+source_id.right(1))
+		var sticker_era: bool=source_id in ["Card_Stickers_Bronze","Card_Stickers_Iron"]
+		var tree_buff: bool=source_id in ["Card_TreeBuff_1","Card_TreeBuff_2"]
+		if not milestones.has(source_id) and not housing and not sticker_era and not tree_buff: continue
 		var bindings: Array=rules["card_bindings"].get(source_id,[])
 		var runtime_id: String=bindings[0] if not bindings.is_empty() else source_id
 		if not rules["research_cards"].has(runtime_id): continue
 		var milestone:={"source_id":source_id,"id":runtime_id,"population":int(row[0]),"ordinal":ordinal}
 		if housing: story["housing_advances"].append(milestone)
+		elif sticker_era: story["sticker_advances"].append(milestone)
+		elif tree_buff: story["environment_advances"].append(milestone)
 		else: story[milestones[source_id]]=milestone
 	if story.has("farming_population_card"):
 		var farming: Dictionary=rules["economy"]["settlements"]["GodPower_PlaceSettlement_2"]
 		farming["cost"]=story["constants"]["FARM_BELIEF_COST"]
 		var core: Dictionary=houses["records"]["Settlement_Farmer_1"]["values"]
-		story["farming_core"]={"span":int(core["base size"]),"breeders":int(core["breeder count"]),
-			"birth_ticks":maxi(1,roundi(float(core["birth rate"])*10))}
+		story["farming_core"]=settlement_core(core)
 	var builder: Dictionary=story.get("builder_settlement",{})
 	if not builder.is_empty():
 		rules["economy"]["settlements"][builder["power"]]["cost"]=builder["cost"]
 		var core: Dictionary=houses["records"]["Settlement_Builder_1"]["values"]
-		story["builder_core"]={"span":int(core["base size"]),"breeders":int(core["breeder count"]),
-			"birth_ticks":maxi(1,roundi(float(core["birth rate"])*10))}
+		story["builder_core"]=settlement_core(core)
 	var mining: Dictionary=story.get("mining_settlement",{})
 	if not mining.is_empty() and story.has("mining_population_card"):
 		rules["economy"]["settlements"][mining["power"]]["cost"]=mining["cost"]
 		var core: Dictionary=houses["records"]["Settlement_Miner_1"]["values"]
-		story["mining_core"]={"span":int(core["base size"]),"breeders":int(core["breeder count"]),
-			"birth_ticks":maxi(1,roundi(float(core["birth rate"])*10))}
+		story["mining_core"]=settlement_core(core)
 		story["ore_advances"]=[]
 		for row: Array in story["tables"][story["scope"]+"/orelevels.csv"]:
 			if row.size()<2 or not str(row[0]).is_valid_int() or not rules["research_cards"].has(row[1]): continue
@@ -290,12 +359,19 @@ static func definition() -> Dictionary:
 	if story["plot_environment"].is_empty(): return {}
 	var chest_position: Dictionary=story["constants"]["FIRST_CHEST"]
 	story["authored_sticker_chests"]=[]
+	story["authored_pack_chests"]=[]
+	var packs := {}
+	for pack: Dictionary in story["reward_catalog"]["records"]["packs"]:
+		packs[pack["name"]]=true
 	var fallback_chests: Array=[]
 	for row: Array in story["tables"][story["scope"]+"/rewardchests.csv"]:
 		if row.size()<7 or not str(row[0]).is_valid_int(): continue
 		var chest:={"id":int(row[0]),"type":row[1],"x":float(row[2]),"z":float(row[3]),"rotation":float(row[4]),"depth":float(row[5]),"reward":row[6]}
 		if row[6].is_empty():
 			fallback_chests.append(chest)
+			continue
+		if packs.has(row[6]):
+			story["authored_pack_chests"].append(chest)
 			continue
 		if not rules["stickers"].has(row[6]) or not rules["cards"].has(row[6]): continue
 		if chest["x"]==float(chest_position["1"]) and chest["z"]==float(chest_position["2"]): story["first_chest"]=chest
@@ -316,3 +392,87 @@ static func definition() -> Dictionary:
 	rules["influence_defaults"]=rules["influence_areas"].duplicate(true)
 	data["progression_rules"]=rules
 	return data
+
+
+static func settlement_core(values: Dictionary) -> Dictionary:
+	return {"span":int(values["base size"]),"breeders":int(values["breeder count"]),
+		"birth_ticks":maxi(1,roundi(float(values["birth rate"])*10)),"vision_radius":float(values["visionradius"]),
+		"belief_modifier":float(values["belief modifier"]),"belief_multiplier":float(values["belief multiplier per peep in house"])}
+
+
+static func god_seed_rules(story: Dictionary,houses: Dictionary,scenery: Dictionary) -> Dictionary:
+	var path := "res://assets/original/campaign/god-seed.json"
+	if not FileAccess.file_exists(path): return {}
+	var content: Variant=JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not content is Dictionary or content.get("source_sha256")!=story["source_sha256"] or content.get("executable_sha256")!=story["day_cycle"]["executable_sha256"]:
+		return {}
+	var rules: Dictionary=content.get("rules",{})
+	if not rules.get("messages") is Dictionary or not rules["messages"].has_all(["5701","5702"]): return {}
+	var variants: Dictionary=scenery["types"]
+	rules["models"]=[]
+	for kind in range(15,20):
+		var model: Dictionary=variants.get(str(kind),{})
+		if model.get("source")!="godseedtrees.group.bin": return {}
+		rules["models"].append(model["model_id"])
+	var radius: float=houses["records"]["Settlement_Builder_1"]["values"]["visionradius"]
+	for id: String in ["Settlement_Farmer_1","Settlement_Miner_1"]:
+		if houses["records"][id]["values"]["visionradius"]!=radius: return {}
+	rules["settlement_vision_radius"]=radius
+	return rules if preload("res://simulation/campaign_god_seed.gd").valid_rules(rules) else {}
+
+
+static func finger_rules(story: Dictionary) -> Dictionary:
+	const manifest := "res://assets/original/campaign/finger-of-god.json"
+	if not FileAccess.file_exists(manifest): return {}
+	var content: Variant=JSON.parse_string(FileAccess.get_file_as_string(manifest))
+	if not content is Dictionary or content.get("source_sha256")!=story["source_sha256"] or content.get("executable_sha256")!=story["day_cycle"]["executable_sha256"]:
+		return {}
+	var rules: Variant=content.get("rules")
+	if not preload("res://simulation/campaign_finger.gd").valid_rules(rules): return {}
+	if not rules.get("messages") is Dictionary or not rules["messages"].has_all(["5901","5902"]): return {}
+	for model: Dictionary in preload("res://infrastructure/asset_catalog.gd").model_records().get("models",[]):
+		if model["id"]==rules["model"] and model["source_sha256"]==content.get("model_sha256"): return rules
+	return {}
+
+
+static func astari_raid_rules(story: Dictionary) -> Dictionary:
+	const manifest := "res://assets/original/campaign/astari-raids.json"
+	if not FileAccess.file_exists(manifest): return {}
+	var content: Variant=JSON.parse_string(FileAccess.get_file_as_string(manifest))
+	if not content is Dictionary or content.get("source_sha256")!=story["source_sha256"] or content.get("executable_sha256")!=story["day_cycle"]["executable_sha256"]: return {}
+	var rules: Variant=content.get("rules")
+	if not preload("res://simulation/campaign_astari_raids.gd").valid_rules(rules): return {}
+	var required: Array=rules["roster"]+rules["parts"].values()
+	for model: Dictionary in preload("res://infrastructure/asset_catalog.gd").model_records().get("models",[]):
+		if model.get("source_sha256")==content.get("model_sha256"): required.erase(model["id"])
+	return rules if required.is_empty() else {}
+
+
+static func astari_village_rules(story: Dictionary,progression: Dictionary) -> Dictionary:
+	const manifest := "res://assets/original/campaign/astari-village.json"
+	if not FileAccess.file_exists(manifest): return {}
+	var content: Variant=JSON.parse_string(FileAccess.get_file_as_string(manifest))
+	if not content is Dictionary or content.get("source_sha256")!=story["source_sha256"] or content.get("executable_sha256")!=story["day_cycle"]["executable_sha256"]: return {}
+	var rules: Dictionary=content.get("rules",{})
+	if not rules.get("houses") is Array or not rules.get("fields") is Array or not rules.get("bodies") is Array: return {}
+	var required: Array=rules["bodies"]+[rules.get("mask","")]
+	for model: Dictionary in preload("res://infrastructure/asset_catalog.gd").model_records().get("models",[]):
+		if model.get("source_sha256")==content.get("model_sha256"): required.erase(model["id"])
+	if not required.is_empty(): return {}
+	for home: Dictionary in rules["houses"]:
+		var spec: Dictionary=story.get("wooden_abodes",{}).get(home["abode"],{})
+		if spec.is_empty(): return {}
+		var values: Dictionary=spec["values"]
+		home["building"]={"model_id":spec["model_id"],"name":spec["name"],"capacity":int(values["capacity"]),
+			"build_ticks":roundi(float(values["build time"])*10),"birth_ticks":roundi(float(values["birth rate"])*10),
+			"min_belief":roundi(values["min belief"]),"max_belief":roundi(values["max belief"]),
+			"belief_modifier":values["belief modifier"],"belief_multiplier":values["belief multiplier per peep in house"],
+			"breeder_count":int(values["breeder count"]),"family":2,"rank":spec["rank"]}
+	for field: Dictionary in rules["fields"]:
+		for row: Dictionary in story["house_selection"]:
+			if row["kind"]!=1 or row["size"]!=field["span"]: continue
+			var rank:=int(str(row["id"]).trim_prefix("Farm_Rank_"))
+			field["building"]=progression["economy"]["plots"].get("farm:%d"%rank,{}).duplicate(true)
+			field["building"]["source_index"]=row["index"]
+			break
+	return rules if preload("res://simulation/campaign_astari.gd").valid_rules(rules) else {}

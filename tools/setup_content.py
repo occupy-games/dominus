@@ -119,7 +119,7 @@ def prepare(root,bundle,report,archive=None,source=None,engine=None):
         run([sys.executable,root/'tools'/script,*args],root,environment,log)
     # Pure metadata recoveries read source tables/instructions; no original
     # executable is ever launched by content setup.
-    for module in ['temple_repair','temple_sites','temple_terrain','temple_membership','temple_modifiers','temple_effects','building_foundation','house_base_stats','house_environment','house_terrain_frame','storm_chests','beautify','beautify_particles']:
+    for module in ['temple_repair','temple_sites','temple_terrain','temple_membership','temple_modifiers','temple_effects','building_foundation','house_base_stats','house_environment','house_terrain_frame','storm_chests','chest_glint','beautify','beautify_particles','god_seed','finger_of_god','astari_raids','astari_village']:
         run([sys.executable,'-m','tools.'+module],root,environment,log)
     report('import',.9,'Preparing graphics and audio for first launch')
     engine=Path(engine) if engine else (bundle/'engine' if (bundle/'engine').is_file() else Path(shutil.which('godot') or '/Applications/Godot.app/Contents/MacOS/Godot'))

@@ -2,7 +2,9 @@ extends RefCounted
 ## Source settlement compression and the first authored farming job.
 
 const Economy = preload("res://simulation/campaign_economy.gd")
+const Upgrades = preload("res://simulation/campaign_settlement_upgrades.gd")
 const Conversion = preload("res://simulation/source_plot_conversion.gd")
+const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
 const POWER := "GodPower_PlaceSettlement_2"
 const BUILDER_POWER := "GodPower_PlaceSettlement_1"
 const MINING_POWER := "GodPower_PlaceSettlement_3"
@@ -40,10 +42,8 @@ static func inspect_placement(world: RefCounted,state: Dictionary,command: Dicti
 	if not integer(x,width) or not integer(z,width) or world.height_at(x,z)<=0 or not world.can_act_at(x,z): return reject
 	if not world.plot_obstruction(x,z).is_empty() or state["props"].size()+2>4096: return reject
 	var spec: Dictionary=Economy.configuration(state)["settlements"][power]
-	var story: Dictionary=state["opening"]["definition"]
-	var power_key: String={BUILDER_POWER:"builder_settlement",MINING_POWER:"mining_settlement"}.get(power,"")
-	var radius_setting: String=story.get(power_key,{}).get("radius_setting","SettCompRadius1")
-	var radius: float=state["progression"]["rules"]["economy_source"]["configuration"].get(radius_setting,spec["radius"])
+	var limits:=Upgrades.parameters(state,power)
+	var radius: float=limits["radius"]
 	var center:=Vector2(x,z)
 	for site: Dictionary in state["progression"]["shrines"]:
 		if (world.source_land_expansion(site) or world.source_ark_site(site)) and world.source_shrine_bounds(site).has_point(Vector2i(x,z)): return reject
@@ -51,6 +51,7 @@ static func inspect_placement(world: RefCounted,state: Dictionary,command: Dicti
 	var members:=[]
 	var entrance:=[]
 	var distance:=INF
+	var capacity_effect:=Capacity.effects(state,world.source_raw_height_at)
 	for home: Dictionary in state["homes"]:
 		var area:=Rect2i(home["x"],home["z"],home.get("span",2),home.get("span",2))
 		var ready: bool=home.get("kind","")=="" and not home.has("settlement_id") and home["progress"]>=home["build_ticks"]
@@ -59,9 +60,10 @@ static func inspect_placement(world: RefCounted,state: Dictionary,command: Dicti
 		if not ready or gap>radius or not world.can_act_at(anchor.x,anchor.y):
 			if area.has_point(Vector2i(x,z)): return reject
 			continue
-		if capacity+int(home["capacity"])>int(spec["max_population"]): return reject
+		var occupancy_limit:=Capacity.capacity(home,capacity_effect)
+		if capacity+occupancy_limit>int(limits["population"]): return reject
 		members.append(home["id"])
-		capacity+=int(home["capacity"])
+		capacity+=occupancy_limit
 		var work:=Vector2i(home["work_x"],home["work_z"])
 		if gap<distance and work!=Vector2i(x,z) and (power!=MINING_POWER or world.height_at(work.x,work.y)>0 and not world._occupied(work.x,work.y)):
 			distance=gap
@@ -73,8 +75,7 @@ static func inspect_placement(world: RefCounted,state: Dictionary,command: Dicti
 
 
 static func merge(world: RefCounted,state: Dictionary,plan: Dictionary) -> int:
-	var core_key: String={"builder":"builder_core","farmer":"farming_core","miner":"mining_core"}[plan["specification"]["role"]]
-	var spec: Dictionary=state["opening"]["definition"][core_key]
+	var spec := core_spec(state,plan["specification"]["role"])
 	var core_id: int=state["next_id"]
 	state["next_id"]+=1
 	var settlement_id: int=state["next_id"]
@@ -106,6 +107,7 @@ static func merge(world: RefCounted,state: Dictionary,plan: Dictionary) -> int:
 		"capacity":plan["capacity"],"residents":occupants,"stored":storage,"max_belief":max_belief,"min_belief":1,
 		"progress":1,"build_ticks":1,"birth_ticks":spec["birth_ticks"],"breeder_count":spec["breeders"],
 		"work_x":work[0],"work_z":work[1],"builder":-1,"stalled":false,"access_path":[],"script_abode_type":-1}
+	apply_core_environment(core,spec)
 	if sacrificed>0: core["sacrificed_followers"]=sacrificed
 	state["homes"].append(core)
 	var placement:={"type":"use_power","x":plan["x"],"z":plan["z"]}
@@ -115,6 +117,16 @@ static func merge(world: RefCounted,state: Dictionary,plan: Dictionary) -> int:
 	world._spatial_revision+=1
 	schedule.mark(registry["schedule"],plan["x"],plan["z"])
 	return settlement_id
+
+
+static func core_spec(state: Dictionary,role: String) -> Dictionary:
+	var key: String={"builder":"builder_core","farmer":"farming_core","miner":"mining_core"}.get(role,"")
+	return state["opening"]["definition"].get(key,{})
+
+
+static func apply_core_environment(home: Dictionary,spec: Dictionary) -> void:
+	for key: String in ["vision_radius","belief_modifier","belief_multiplier"]:
+		if spec.has(key) and not home.has(key): home[key]=spec[key]
 
 
 static func plan_field(world: RefCounted,state: Dictionary,settlement_id: int,plot_id: int=-1) -> Dictionary:

@@ -3,6 +3,8 @@ extends RefCounted
 ## hypothetical route planning cannot edit terrain, move followers or advance story.
 
 const DIRECTIONS := [Vector2i.LEFT,Vector2i.UP,Vector2i.RIGHT,Vector2i.DOWN]
+const Farming = preload("res://simulation/campaign_farming.gd")
+const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
 var last_sculpt_tick := -100
 var camera_center := Vector2.INF
 var planned_edits := 0
@@ -12,6 +14,10 @@ var growth_site := Vector3i(-1,-1,-1)
 var growth_idle_ticks := 0
 var last_growth_search := -100
 var rejected_sites := {}
+var waiting_topology: Array=[]
+var waiting_routes := {}
+var farm_expansion_point:=Vector2i(-1,-1)
+var last_farm_expansion_search:=-100
 
 
 func commands(world: RefCounted) -> Array:
@@ -157,11 +163,13 @@ func discovery_command(world: RefCounted,state: Dictionary) -> Dictionary:
 			if not research.is_empty(): return research
 			var mining:=mining_command(world,state)
 			if not mining.is_empty(): return mining
-			for advance: String in ["rock_belief","belief_collector","cliff_sculpt"]:
+			for advance: String in ["rock_belief","belief_collector","cliff_sculpt","finger_of_god","capacity_shrine","underwater_sculpt"]:
 				var rules: Dictionary=opening["definition"].get(advance,{})
 				if rules.is_empty(): continue
 				research=research_advance(world,state,rules["card"])
 				if not research.is_empty(): return research
+			var capacity:=capacity_command(world,state)
+			if not capacity.is_empty(): return capacity
 			var fountain:=fountain_command(world,state)
 			if not fountain.is_empty(): return fountain
 			var builder:=builder_settlement_command(world,state)
@@ -169,6 +177,8 @@ func discovery_command(world: RefCounted,state: Dictionary) -> Dictionary:
 			var command:=farming_command(world,state)
 			if not command.is_empty(): return command
 			if not opening.has("farming_step") or opening.get("superfast_step")==5:
+				var expansion:=farming_expansion(world,state)
+				if not expansion.is_empty(): return expansion
 				if state["belief"]==0:
 					var collect:=collect_belief(world,state)
 					if not collect.is_empty(): return collect
@@ -243,6 +253,12 @@ func fountain_command(world: RefCounted,state: Dictionary) -> Dictionary:
 
 func farming_command(world: RefCounted,state: Dictionary) -> Dictionary:
 	var opening: Dictionary=state["opening"]
+	if opening.get("farming_placing",false):
+		if opening.has("farming_preview"):
+			var confirm:={"type":"campaign_farm_confirm"}
+			return confirm if world.inspect(confirm)["ok"] else {"type":"campaign_farm_cancel"}
+		var preview:={"type":"campaign_farm_preview","x":farm_expansion_point.x,"z":farm_expansion_point.y}
+		return preview if world.inspect(preview)["ok"] else {"type":"campaign_farm_cancel"}
 	match int(opening.get("farming_step",-1)):
 		-1,2:
 			var cost: int=opening["definition"]["constants"]["FARM_BELIEF_COST"]
@@ -293,6 +309,42 @@ func farming_command(world: RefCounted,state: Dictionary) -> Dictionary:
 	return {}
 
 
+func farming_expansion(world: RefCounted,state: Dictionary) -> Dictionary:
+	var opening: Dictionary=state["opening"]
+	if opening.get("superfast_step")!=5 or not opening.get("sprog_homes",[]).is_empty(): return {}
+	if state["belief"]<int(opening["definition"]["constants"]["FARM_BELIEF_COST"]): return collect_belief(world,state)
+	if int(state["tick"])-last_farm_expansion_search<150: return {}
+	last_farm_expansion_search=state["tick"]
+	var best:=Vector2i(-1,-1)
+	var members:=3
+	for home: Dictionary in state["homes"]:
+		if home.get("kind","")!="" or home.has("settlement_id") or home["progress"]<home["build_ticks"]: continue
+		var point:=Vector2i(roundi(home.get("anchor_x",home["x"])),roundi(home.get("anchor_z",home["z"])))
+		var plan:=Farming.inspect_placement(world,state,{"x":point.x,"z":point.y})
+		if not plan["ok"] or plan["members"].size()<=members: continue
+		best=point
+		members=plan["members"].size()
+	if best.x<0: return {}
+	farm_expansion_point=best
+	return {"type":"campaign_farm_select"}
+
+
+func capacity_command(world: RefCounted,state: Dictionary) -> Dictionary:
+	var opening: Dictionary=state["opening"]
+	if opening.get("capacity_step",0) in [1,2] and Capacity.CARD in state["progression"]["completed"]:
+		return {"type":"campaign_capacity_card_closed"}
+	if not opening.get("capacity_status",{}).get("can_place",false) or state["props"].any(func(prop: Dictionary) -> bool: return prop.get("kind")==Capacity.KIND): return {}
+	for home: Dictionary in state["homes"]:
+		if home.get("kind","")!="" or home.get("settlement_core",false) or home["residents"]==0: continue
+		var x: int=home["x"]
+		var z: int=home["z"]
+		var span: int=home.get("span",2)
+		for point: Vector2i in [Vector2i(x-1,z),Vector2i(x+span,z),Vector2i(x,z-1),Vector2i(x,z+span)]:
+			var command:={"type":"use_power","power":Capacity.POWER,"x":point.x,"z":point.y}
+			if world.inspect(command)["ok"]: return command
+	return {}
+
+
 func builder_settlement_command(world: RefCounted,state: Dictionary) -> Dictionary:
 	var opening: Dictionary=state["opening"]
 	var builder: Dictionary=opening["definition"].get("builder_settlement",{})
@@ -311,7 +363,7 @@ func builder_settlement_command(world: RefCounted,state: Dictionary) -> Dictiona
 
 
 func housing_research(world: RefCounted,state: Dictionary) -> Dictionary:
-	for key: String in ["housing_advances","grain_advances","ore_advances"]:
+	for key: String in ["sticker_advances","housing_advances","grain_advances","ore_advances","environment_advances"]:
 		for level: Dictionary in state["opening"]["definition"].get(key,[]):
 			var command:=research_advance(world,state,level["id"])
 			if not command.is_empty(): return command
@@ -379,18 +431,49 @@ func research_advance(world: RefCounted,state: Dictionary,card: String) -> Dicti
 		authored.configure(world,state,[])
 		chests=authored.snapshot()
 	var fallback: Dictionary={}
+	var buried: Array=[]
 	for chest: Dictionary in chests:
 		if chest["opened"] or chest["opening"] or not world.can_act_at(chest["x"],chest["z"]): continue
 		var open:={"type":"open_chest","id":chest["id"]}
-		if chest["card"].is_empty() and chest.get("native",false):
+		if chest.get("native",false) and (chest["card"].is_empty() or str(chest["id"]).begins_with("storm:")):
 			if fallback.is_empty() and chest["exposed"] and world.inspect(open)["ok"]: fallback=open
+			if not chest["exposed"]: buried.append(chest)
 			continue
 		if int(p["rules"]["stickers"].get(chest["card"],{}).get("contributions",{}).get(definition["research_type"],0))<=0: continue
 		if world.inspect(open)["ok"]: return open
-		var height:=maxi(0,floori(chest["height"]+0.01))
-		var gesture:=route_gesture(world,[Vector3i(roundi(chest["x"]),roundi(chest["z"]),height)])
+		var gesture:=excavate_chest(world,chest)
 		if not gesture.is_empty(): return gesture
+	if fallback.is_empty():
+		for chest: Dictionary in buried:
+			fallback=excavate_chest(world,chest)
+			if not fallback.is_empty(): break
 	return fallback
+
+
+func excavate_chest(world: RefCounted,chest: Dictionary) -> Dictionary:
+	var origin:=Vector2i(floori(chest["x"]),floori(chest["z"]))
+	var nearest:=Vector2i(roundi(chest["x"]),roundi(chest["z"]))
+	var vertices: Array[Vector2i]=[nearest]
+	for offset: Vector2i in [Vector2i.ZERO,Vector2i.RIGHT,Vector2i.DOWN,Vector2i.ONE]:
+		if origin+offset!=nearest: vertices.append(origin+offset)
+	var floor_height:=floori(chest["height"]+0.01)
+	if floor_height<int(world.sculpt_minimum_layer()): return {}
+	# A fractional chest position samples a quad. An edge drag must lower
+	# one of its contributing vertices, even after the closest one is clear.
+	for offset in range(12):
+		for cell: Vector2i in vertices:
+			var height: int=world.sculpt_height_at(cell.x,cell.y)
+			if height<=floor_height: continue
+			for direction: Vector2i in DIRECTIONS:
+				var edge:=cell+direction*offset
+				var outward:=edge+direction
+				var layer:=maxi(floor_height+1,world.sculpt_height_at(outward.x,outward.y)+1)
+				if layer>height or layer>world.sculpt_height_at(edge.x,edge.y): continue
+				var command:={"type":"sculpt_drag","x":edge.x,"z":edge.y,"nx":direction.x,"nz":direction.y,
+					"layer":layer,"distance":-offset-1,"radius":0}
+				var result: Dictionary=world.inspect(command)
+				if result["ok"] and result["edits"].any(func(edit: Dictionary) -> bool: return int(edit["cell"])==cell.y*1024+cell.x and int(edit.get("raw_height",19+int(edit["height"])))-19<height): return command
+	return {}
 
 
 func connect_shrine(world: RefCounted,state: Dictionary) -> Dictionary:
@@ -410,27 +493,24 @@ func connect_shrine(world: RefCounted,state: Dictionary) -> Dictionary:
 
 
 func grow_promised_land(world: RefCounted,state: Dictionary) -> Dictionary:
+	var paid_sculpt: bool=state["opening"].get("events_step")==1 and state["belief"]>0
+	var topology: Array=[world.get_instance_id(),world._state_generation,world._spatial_revision,state["progression"].get("influence_revision",0),paid_sculpt]
+	if waiting_topology!=topology:
+		waiting_topology=topology
+		waiting_routes.clear()
 	for follower: Dictionary in state["followers"]:
 		if follower["state"]!="waiting" or int(follower["job"])<0 or not follower.has("work_x"): continue
 		var start := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
 		var target := Vector2i(follower["work_x"],follower["work_z"])
-		var path := sculpt_route(world,state,start,target,8)
-		if path.is_empty(): path=sculpt_route(world,state,start,target,16)
-		var connection := route_gesture(world,path)
+		var connection := route_gesture(world,waiting_route(world,state,start,target))
 		if not connection.is_empty(): return connection
-	var next_release: Dictionary={}
-	for home_id: int in state["opening"].get("sprog_homes",[]):
-		var release := {"type":"sprog","home_id":home_id}
-		var plan: Dictionary=world.inspect(release)
-		if not plan["ok"]: continue
-		if plan.has("shrine_plan"):
-			next_release=release
-			break
-		if next_release.is_empty(): next_release=release
-	if not next_release.is_empty():
+	var ready: Array=state["opening"].get("sprog_homes",[])
+	if not ready.is_empty():
+		var home_id: int=state["opening"].get("sprog_shrine_home",-1)
+		if home_id<0: home_id=ready[0]
 		growth_site=Vector3i(-1,-1,-1)
 		growth_idle_ticks=0
-		return next_release
+		return {"type":"sprog","home_id":home_id}
 	if not world.has_room_for_growth(): return {}
 	if growth_site.x<0:
 		if int(state["tick"])-last_growth_search<20: return {}
@@ -454,6 +534,27 @@ func grow_promised_land(world: RefCounted,state: Dictionary) -> Dictionary:
 		growth_site=Vector3i(-1,-1,-1)
 		growth_idle_ticks=0
 	return {}
+
+
+func waiting_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Vector2i) -> Array:
+	var key: Array=[start,target]
+	var saved: Dictionary=waiting_routes.get(key,{})
+	var revision:=Vector3i(state["terrain_revision"],state["opening"].get("bathymetry_revision",0),world.sculpt_minimum_layer())
+	if saved.get("revision")==revision: return saved["path"]
+	var width: int=state["width"]
+	var terrain: PackedByteArray=state["terrain"]
+	var bounds:=Rect2i(start.min(target),(start-target).abs()+Vector2i.ONE).grow(17).intersection(Rect2i(0,0,width,width))
+	var heights:=PackedByteArray()
+	for z in range(bounds.position.y,bounds.end.y):
+		heights.append_array(terrain.slice(z*width+bounds.position.x,z*width+bounds.end.x))
+	if not saved.is_empty() and heights==saved["heights"] and saved["revision"].y==revision.y and saved["revision"].z==revision.z:
+		saved["revision"]=revision
+		return saved["path"]
+	var path:=sculpt_route(world,state,start,target,8)
+	if path.is_empty(): path=sculpt_route(world,state,start,target,16)
+	if not saved.is_empty() or waiting_routes.size()<256:
+		waiting_routes[key]={"revision":revision,"heights":heights,"path":path}
+	return path
 
 
 func choose_growth_site(world: RefCounted,state: Dictionary) -> Vector3i:
@@ -510,7 +611,7 @@ func choose_growth_site(world: RefCounted,state: Dictionary) -> Vector3i:
 	return best
 
 
-func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Vector2i,margin: int) -> Array:
+func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Vector2i,margin: int,target_height: int=-1) -> Array:
 	var bounds := Rect2i(start.min(target)-Vector2i.ONE*margin,(start-target).abs()+Vector2i.ONE*(margin*2+1))
 	var first := Vector3i(start.x,start.y,world.height_at(start.x,start.y))
 	if first.z<=0: return []
@@ -534,10 +635,13 @@ func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Ve
 		for direction: Vector2i in DIRECTIONS:
 			var cell := Vector2i(current.x,current.y)+direction
 			if not bounds.has_point(cell) or cell.x<1 or cell.y<1 or cell.x>=int(state["width"])-1 or cell.y>=int(state["width"])-1: continue
-			if world._occupied(cell.x,cell.y): continue
+			if world._occupied(cell.x,cell.y) or route_contains_cell(previous,current,cell): continue
 			var actual: int = world.height_at(cell.x,cell.y)
 			var minimum := maxi(1,current.z-1)
 			var maximum := mini(63,current.z+1)
+			if cell==target and target_height>0:
+				minimum=maxi(minimum,target_height)
+				maximum=mini(maximum,target_height)
 			for height in range(minimum,maximum+1):
 				if actual!=height and not editable(world,state,cell,actual,height): continue
 				var next := Vector3i(cell.x,cell.y,height)
@@ -546,8 +650,20 @@ func sculpt_route(world: RefCounted,state: Dictionary,start: Vector2i,target: Ve
 				costs[next]=cost
 				previous[next]=current
 				serial+=1
-				push(heap,[cost+absi(cell.x-target.x)+absi(cell.y-target.y),serial,next])
+				var remaining:=absi(cell.x-target.x)+absi(cell.y-target.y)
+				if target_height>0: remaining=maxi(remaining,absi(height-target_height))
+				push(heap,[cost+remaining,serial,next])
 	return []
+
+
+func route_contains_cell(previous: Dictionary,step: Vector3i,cell: Vector2i) -> bool:
+	# A ramp has one physical height per tile, even when the search can reach
+	# the same position at multiple heights through different routes.
+	while step.x!=cell.x or step.y!=cell.y:
+		var parent: Vector3i=previous[step]
+		if parent==step: return false
+		step=parent
+	return true
 
 
 func editable(world: RefCounted,state: Dictionary,cell: Vector2i,actual: int,height: int) -> bool:
@@ -556,6 +672,7 @@ func editable(world: RefCounted,state: Dictionary,cell: Vector2i,actual: int,hei
 	var band: Dictionary = opening["definition"]["coastal_free_band"]
 	var index := cell.y*int(state["width"])+cell.x
 	var raw: int = 19+actual if actual>0 else int(opening["submerged_levels"].get(str(index),opening["definition"]["raw_floor"][index]))
+	if opening["definition"].has("underwater_sculpt") and mini(raw,19+height)<19+int(world.sculpt_minimum_layer()): return false
 	if opening.get("events_step")==1 and state["belief"]>0: return true
 	return mini(raw,19+height)>=int(band["min"]) and maxi(raw,19+height)<=int(band["max"])
 

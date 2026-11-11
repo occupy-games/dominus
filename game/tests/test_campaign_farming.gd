@@ -180,6 +180,62 @@ func check_grain_building(world: RefCounted,deploy: Dictionary) -> void:
 	if failures==0: check_fountain(world)
 	if failures==0: check_source_chest(world)
 	if failures==0: check_grain_advances(world)
+	if failures==0: check_restaff_field(world,deploy)
+
+
+func check_restaff_field(world: RefCounted,deploy: Dictionary) -> void:
+	var state: Dictionary=world._state
+	var settlement:=Economy.settlement(state,deploy["id"])
+	var core: Dictionary=state["homes"].filter(func(home: Dictionary) -> bool: return home["id"]==settlement["members"][0])[0]
+	var worker: Dictionary={}
+	for agent: Dictionary in state["followers"]:
+		if agent.get("away_home")!=core["id"] or not agent.has("workplace"): continue
+		worker=agent
+		break
+	check(not worker.is_empty(),"The original farming settlement must have a worker to return")
+	if worker.is_empty(): return
+	var field_id: int=worker["workplace"]
+	for key: String in ["away_home","workplace","settlement_id","profession"]: worker.erase(key)
+	worker.merge({"state":"indoors","indoors_home":core["id"],"x":float(core["work_x"]),"z":float(core["work_z"]),"job":-1,"path":[]},true)
+	core["residents"]+=1
+	var plan: Dictionary=world.inspect(deploy)
+	check(plan.get("field",{}).get("id")==field_id,"The settlement must reuse its unstaffed field before claiming another plot")
+	if failures>0: return
+	var homes: int=state["homes"].size()
+	world.step([deploy])
+	var field: Dictionary=state["homes"].filter(func(home: Dictionary) -> bool: return home["id"]==field_id)[0]
+	check(state["homes"].size()==homes and worker.get("workplace")==field_id and worker.get("away_home")==core["id"],"Dispatch must staff the existing field and release one resident")
+	worker.merge({"x":float(field["work_x"])+0.25,"z":float(field["work_z"]),"path":[]},true)
+	field["harvest_accumulator"]=0.0
+	var restored:=World.new()
+	check(restored.restore(world.export_state(),RandomNumberGenerator.new()),"A reassigned field and its worker must survive reload")
+	for tick in range(10): world.step()
+	check(field["harvest_accumulator"]>0.0 and worker["state"]=="farming","A worker whose route was cleared near the field must reach the final waypoint and resume production")
+	if failures==0: check_leashed_worker(world,worker,field)
+
+
+func check_leashed_worker(world: RefCounted,worker: Dictionary,field: Dictionary) -> void:
+	var state: Dictionary=world._state
+	var start:=Vector2i(field["work_x"],field["work_z"])
+	state["belief"]=int(state["opening"]["definition"]["leash_rules"]["follower_cost"])
+	var leash: Dictionary={}
+	for offset: Vector2i in [Vector2i.LEFT,Vector2i.RIGHT,Vector2i.UP,Vector2i.DOWN]:
+		var end:=start+offset*2
+		var command:={"type":"leash","followers":[worker["id"]],"x":end.x,"z":end.y}
+		var plan: Dictionary=world.inspect(command)
+		if plan["ok"] and str(plan.get("repair_site",""))=="" and not plan.get("sacrifice",false):
+			leash=command
+			break
+	check(not leash.is_empty(),"A farmer must have a reachable leash destination")
+	if failures>0: return
+	var stock: float=field["harvest_accumulator"]
+	world.step([leash])
+	for tick in range(200):
+		if not worker.has("leash_goal"): break
+		world.step()
+	var destination:=Vector2(leash["x"],leash["z"])
+	check(not worker.has("leash_goal") and destination.distance_to(Vector2(worker["x"],worker["z"]))<0.01,"A working farmer must finish its leash before resuming field movement")
+	check(field["harvest_accumulator"]==stock and worker.get("workplace")==field["id"],"An ordinary leash must pause production and retain the job")
 
 
 func check_paid_abode(world: RefCounted) -> void:
@@ -192,7 +248,7 @@ func check_paid_abode(world: RefCounted) -> void:
 		if cost<=0 or cost>int(state["wheat"]): continue
 		var area:=Rect2i(plot["x"],plot["z"],plot["size"],plot["size"])
 		for candidate: Vector2i in [area.position-Vector2i(1,0),area.position-Vector2i(0,1),Vector2i(area.end.x,area.position.y),Vector2i(area.position.x,area.end.y)]:
-			if not world._promised_abode_approach(candidate,area,{}).is_empty():
+			if not world._promised_abode_approach(candidate,area,{},true).is_empty():
 				paid_plot=plot
 				entrance=candidate
 				break
@@ -201,12 +257,34 @@ func check_paid_abode(world: RefCounted) -> void:
 	if paid_plot.is_empty(): return
 	var builder: Dictionary=world._agent(entrance.x,entrance.y,false)
 	state["followers"].append(builder)
+	var opening: Dictionary=state["opening"]
+	opening["leash_step"]=4
+	opening["leash_level_card"]=opening["definition"]["leash_population_card"]["id"]
+	state["progression"]["script_unlocks"]["Leash"]=true
+	var leash:={"type":"leash","followers":[builder["id"]],"x":center(paid_plot).x,"z":center(paid_plot).y}
+	state["belief"]=opening["definition"]["leash_rules"]["follower_cost"]
+	var belief: int=state["belief"]
 	var stock: int=state["wheat"]
 	state["wheat"]=cost-1
-	check(not world.begin_promised_abode(paid_plot,builder["id"]) and paid_plot["id"] in state["source_plots"]["active"] and state["wheat"]==cost-1,"Insufficient wheat must preserve the stock and source plot")
+	check(not world.inspect(leash)["ok"],"Leashing to an ordinary plot must require its source wheat cost")
+	world.step([leash])
+	check(paid_plot["id"] in state["source_plots"]["active"] and state["wheat"]==cost-1 and state["belief"]==belief,"Insufficient wheat must preserve the plot and both currencies")
 	state["wheat"]=stock
-	check(world.begin_promised_abode(paid_plot,builder["id"]) and state["wheat"]==stock-cost,"A real ordinary abode must debit its source wheat cost exactly once")
+	check(world.inspect(leash).has("abode_plan"),"Leashing a Builder to the original plot must plan the requested abode")
+	world.step([leash,leash])
+	check(state["wheat"]==stock-cost and state["belief"]==0,"Claiming an ordinary plot must debit the source wheat and leash costs exactly once")
 	var home: Dictionary=state["homes"].back()
+	check(builder["job"]==home["id"] and home["builder"]==builder["id"],"The leash must assign the Builder to the exact plot")
+	var assistant: Dictionary=world._agent(entrance.x,entrance.y,false)
+	state["followers"].append(assistant)
+	state["belief"]=belief
+	var assist:=leash.merged({"followers":[assistant["id"]]},true)
+	if int(home["build_capacity"])>1:
+		check(world.inspect(assist)["ok"],"An unfinished abode must accept a reachable Builder in its spare work slot")
+		world.step([assist,assist])
+		check(assistant["job"]==home["id"] and state["belief"]==0 and state["wheat"]==stock-cost,"Assisting must assign an extra Builder, charge the leash once and preserve wheat")
+	else:
+		check(not world.inspect(assist)["ok"],"An unfinished abode with no free work slots must refuse another Builder")
 	var seconds: float=state["opening"]["definition"]["house_base_stats"]["rows"][home["source_index"]]["values"]["build time"]
 	check(home["build_ticks"]==roundi(seconds),"The source 0.1 build-time modifier must apply to the inherited abode duration")
 	for tick in range(400):

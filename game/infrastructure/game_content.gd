@@ -9,6 +9,25 @@ func landscape_texture() -> Texture2D:
 	return null
 
 
+func chest_glint() -> Dictionary:
+	const manifest := "res://assets/original/chest_glint.json"
+	const atlas := "res://assets/extracted/VFX/Textures/Misc.png"
+	if not FileAccess.file_exists(manifest) or not ResourceLoader.exists(atlas):
+		return {}
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(manifest))
+	if not data is Dictionary or data.get("version")!=1:
+		return {}
+	var source: Dictionary = data.get("source",{})
+	if source.get("atlas")!="VFX/Textures/Misc.png" or source.get("atlas_sha256")!=FileAccess.get_sha256(atlas):
+		return {}
+	var texture := load(atlas) as Texture2D
+	var dimensions: Array = data.get("atlas_size",[])
+	if texture==null or dimensions.size()!=2 or texture.get_width()!=int(dimensions[0]) or texture.get_height()!=int(dimensions[1]):
+		return {}
+	data["texture"]=texture
+	return data
+
+
 func follower_assets(opening: bool = false) -> Dictionary:
 	var result := animated_assets("followers")
 	if opening:
@@ -122,7 +141,7 @@ func audio_assets() -> Dictionary:
 		if ResourceLoader.exists(path):
 			result[role] = load(path)
 	var source_events := preload("res://infrastructure/audio_events.gd")
-	result.merge(source_events.events(["PLAYSOUND_SCULPTLOOP", "STOPSOUND_SCULPTLOOP", "PLAYSOUND_FOLLOWERSTATEREACTTOCHEST", "PLAYSOUND_FOLLOWERSTATECELEBRATECARD", "Pit of Doom sacrifice", "Fountain celebration", "Shrine belief collection"]))
+	result.merge(source_events.events(["PLAYSOUND_SCULPTLOOP", "STOPSOUND_SCULPTLOOP", "PLAYSOUND_FOLLOWERSTATEREACTTOCHEST", "PLAYSOUND_FOLLOWERSTATECELEBRATECARD", "Pit of Doom sacrifice", "Fountain celebration", "Shrine belief collection", "PLAYSOUND_GODSEED", "Finger of God impact", "Swamp cast", "Meteor Strike launch", "Meteor Strike impact", "PLAYSOUND_METEORIMPACTWATER"]))
 	result["beautify_loop"] = source_events.beautify_loop()
 	result["rain_loop"] = source_events.rain_loop()
 	return result

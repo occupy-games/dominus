@@ -56,7 +56,7 @@ static func clear_capacity(fields: Callable,x: int,z: int,limit: int=Plots.MAX_S
 	return limit
 
 
-static func region(state: Dictionary,tile: Vector2i,rules: Dictionary,sizes: Array,fields: Callable,loaded: Callable,band: Callable,height: Callable,special_id: int=-1,eligibility: Callable=Callable(),fresh_allowed: bool=true) -> void:
+static func region(state: Dictionary,tile: Vector2i,rules: Dictionary,sizes: Array,fields: Callable,loaded: Callable,band: Callable,height: Callable,special_id: int=-1,eligibility: Callable=Callable(),fresh_allowed: bool=true,capacity: Callable=Callable()) -> void:
 	var pending: Array=[]
 	for id: int in state["active"]:
 		var plot: Dictionary=state["slots"][id]
@@ -85,21 +85,18 @@ static func region(state: Dictionary,tile: Vector2i,rules: Dictionary,sizes: Arr
 	if not fresh_allowed: return
 	var occupied := {}
 	for key: String in state["owners"]: occupied[int(key)]=true
-	var capacities := {}
-	var largest := 0
-	for bounds: Array in sizes: largest=maxi(largest,int(bounds[1]))
-	var capacity := func(x: int,z: int) -> int:
-		var key := z*1024+x
-		if not capacities.has(key): capacities[key]=clear_capacity(fields,x,z,largest)
-		return int(capacities[key])
+	if not capacity.is_valid():
+		var largest := 0
+		for bounds: Array in sizes: largest=maxi(largest,int(bounds[1]))
+		capacity=func(x: int,z: int) -> int: return clear_capacity(fields,x,z,largest)
 	var eligible := eligibility if eligibility.is_valid() else func(x: int,z: int) -> bool: return fields.call(x,z)["eligible"]
 	var fresh := Plots.new_region(tile,1024,sizes,loaded,capacity,band,eligible,occupied,state["free"].size())
 	for plot: Dictionary in fresh: allocate(state,float(plot["x"]),float(plot["z"]),int(plot["size"]),float(height.call(plot["x"],plot["z"])))
 
 
-static func maintain(state: Dictionary,rules: Dictionary,limits: Dictionary,fields: Callable,loaded: Callable,band: Callable,height: Callable,special_id: int=-1,eligibility: Callable=Callable(),fresh_region: Callable=Callable()) -> void:
+static func maintain(state: Dictionary,rules: Dictionary,limits: Dictionary,fields: Callable,loaded: Callable,band: Callable,height: Callable,special_id: int=-1,eligibility: Callable=Callable(),fresh_region: Callable=Callable(),capacity: Callable=Callable()) -> void:
 	Schedule.dispatch(state["schedule"],limits,func(tile: Vector2i) -> void:
-		region(state,tile,rules,limits["sizes"],fields,loaded,band,height,special_id,eligibility,bool(fresh_region.call(tile)) if fresh_region.is_valid() else true))
+		region(state,tile,rules,limits["sizes"],fields,loaded,band,height,special_id,eligibility,bool(fresh_region.call(tile)) if fresh_region.is_valid() else true,capacity))
 
 
 static func advance(state: Dictionary,delta: float,rate: float) -> void:

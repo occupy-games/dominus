@@ -28,6 +28,10 @@ static func events(names: Array) -> Dictionary:
 	var definitions: Dictionary = read().get("events", {})
 	for name: String in names:
 		if result.has(name) or not definitions.has(name): continue
+		if definitions[name].has("layers"):
+			var mix := layered_effect(definitions[name]["layers"])
+			if mix!=null: result[name]=mix
+			continue
 		var samples: Array = []
 		for relative: String in definitions[name]["default_media"]:
 			if not relative.begins_with("audio/") or ".." in relative.split("/"): continue
@@ -35,6 +39,25 @@ static func events(names: Array) -> Dictionary:
 			if streams[relative] is AudioStream: samples.append(streams[relative])
 		if not samples.is_empty(): result[name] = samples
 	return result
+
+
+static func layered_effect(layers: Array) -> AudioStreamSynchronized:
+	var mix := AudioStreamSynchronized.new()
+	mix.stream_count=layers.size()
+	for index in range(layers.size()):
+		var layer: Dictionary=layers[index]
+		var relative: String=layer["media"]
+		if not relative.begins_with("audio/") or ".." in relative.split("/"): return null
+		var source := load("res://assets/original/"+relative) as AudioStreamWAV
+		if source==null: return null
+		var variants := AudioStreamRandomizer.new()
+		for pitch: float in layer["pitch_cents"]:
+			var sample := source.duplicate() as AudioStreamWAV
+			sample.mix_rate=roundi(source.mix_rate*pow(2.0,pitch/1200.0))
+			variants.add_stream(variants.streams_count,sample)
+		mix.set_sync_stream(index,variants)
+		mix.set_sync_stream_volume(index,float(layer["volume_db"]))
+	return mix
 
 
 static func beautify_loop() -> Dictionary:

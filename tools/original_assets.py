@@ -261,6 +261,8 @@ def extract_scenery(source, output):
 FOLLOWER_CLIPS = {
     "idle": "default_stand_1", "walking": "default_walk_1", "building": "default_hammer_ground_1",
     "sacrifice_1": "default_sacrifice_1", "sacrifice_2": "default_sacrifice_2",
+    "swamp_stand": "swamp_stand_1", "swamp_struggle": "swamp_stand_1_struggle_1",
+    "swamp_die": "swamp_die_1", "swamp_sink": "swamp_sink",
 }
 
 

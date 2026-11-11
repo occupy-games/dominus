@@ -215,6 +215,7 @@ func actor_data(id: String, roles: Dictionary) -> Dictionary:
 		for descriptor: Dictionary in motion.get("clips",[]):
 			if descriptor["name"]!=roles[role]: continue
 			if not loaded_clips.has(descriptor["path"]): loaded_clips[descriptor["path"]]=animation_clip(descriptor["path"])
+			if loaded_clips[descriptor["path"]].is_empty(): continue
 			clips[role]=loaded_clips[descriptor["path"]]
 			cues[role]=preload("res://infrastructure/audio_events.gd").cues(model["descriptor"]["source"],descriptor["name"])
 			for cue: Dictionary in cues[role]: events.append(cue["event"])
@@ -233,11 +234,65 @@ func worker_data(role: String) -> Dictionary:
 	result["attachments"]=[]
 	var parts: Array = [["5e319cc9",[]],["1bc47100",["farming"]],["10a3261e",["carrying"]]] if farmer else [["a323d276",[]],["ad63aeca",["mining"]]]
 	for pair: Array in parts:
-		var model := model_data("follower.group.bin:"+pair[0])
-		if model.is_empty(): continue
-		var skin := animation_clip(model["descriptor"]["motion"]["skin"])
-		if skin.is_empty() or skin["bones"]!=result["bones"]: continue
-		model["bindings"]=skin["bindings"]
-		model["visible_states"]=pair[1]
-		result["attachments"].append(model)
+		var part := actor_part("follower.group.bin:"+pair[0],result["bones"],pair[1])
+		if not part.is_empty(): result["attachments"].append(part)
 	return result
+
+
+func astari_archer_data(rules: Dictionary) -> Dictionary:
+	if rules.is_empty(): return {}
+	var result:=masked_astari_data(rules["roster"],rules["parts"]["male_AstariMask"],rules["clips"])
+	if result.is_empty(): return {}
+	for key: String in ["bow","bow_pull","arrow"]:
+		var part:=actor_part(rules["parts"][key],result["bones"],rules["attachments"].get(key,[]))
+		if part.is_empty(): return {}
+		result["attachments"].append(part)
+	return result
+
+
+func astari_civilian_data(base: Dictionary,rules: Dictionary) -> Dictionary:
+	if rules.is_empty(): return {}
+	var result:=masked_astari_data(rules["bodies"],rules["mask"],rules["clips"])
+	if not result.is_empty() and result["bones"]==base.get("bones",[]):
+		result["clips"]=base["clips"].merged(result["clips"],true)
+		result["audio_cues"]=base.get("audio_cues",{}).merged(result["audio_cues"],true)
+		result["audio_events"]=base.get("audio_events",{}).merged(result["audio_events"],true)
+	return result
+
+
+func masked_astari_data(bodies: Array,mask_id: String,clips: Dictionary) -> Dictionary:
+	var result:=actor_data(bodies[0],clips)
+	if result.is_empty() or result["clips"].size()!=clips.size(): return {}
+	var female:=actor_part(bodies[1],result["bones"],[])
+	var mask:=actor_part(mask_id,result["bones"],[])
+	if female.is_empty() or mask.is_empty(): return {}
+	result["models"].append(female)
+	result["attachments"]=[mask]
+	return result
+
+
+func arrow_reaction_data(base: Dictionary,rules: Dictionary) -> Dictionary:
+	if base.is_empty() or rules.is_empty(): return {}
+	var roles: Dictionary={"idle":rules["clips"]["idle"]}
+	for clip: String in rules["hit_durations"]: roles[clip]=clip
+	var original:=actor_data(rules["roster"][0],roles)
+	if original.is_empty() or original["bones"]!=base["bones"] or original["clips"].size()!=roles.size(): return {}
+	var result:=base.duplicate(false)
+	result["clips"]=base["clips"].merged(original["clips"])
+	result["attachments"]=base.get("attachments",[]).duplicate()
+	result["audio_cues"]=base.get("audio_cues",{}).merged(original["audio_cues"])
+	result["audio_events"]=base.get("audio_events",{}).merged(original["audio_events"])
+	for side: String in ["front","rear"]:
+		var arrow:=actor_part(rules["parts"]["arrow_"+side],base["bones"],rules["hit_reactions"][side])
+		if not arrow.is_empty(): result["attachments"].append(arrow)
+	return result
+
+
+func actor_part(id: String,bones: Array,states: Array) -> Dictionary:
+	var part:=model_data(id)
+	if part.is_empty(): return {}
+	var skin:=animation_clip(part["descriptor"].get("motion",{}).get("skin",""))
+	if skin.is_empty() or skin["bones"]!=bones: return {}
+	part["bindings"]=skin["bindings"]
+	part["visible_states"]=states
+	return part

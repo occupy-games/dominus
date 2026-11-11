@@ -42,10 +42,16 @@ func _ready() -> void:
 func apply_snapshot(state: Dictionary) -> void:
 	var cliff_changed: bool=selected=="Card_GodPower_CliffSculpt" and snapshot.get("opening",{}).get("cliff_status",{})!=state.get("opening",{}).get("cliff_status",{})
 	var collector_changed: bool=selected=="Card_Monument_BeliefCollect" and snapshot.get("opening",{}).get("collector_status",{})!=state.get("opening",{}).get("collector_status",{})
+	var capacity_changed: bool=selected=="Card_Monument_Capacity" and snapshot.get("opening",{}).get("capacity_status",{})!=state.get("opening",{}).get("capacity_status",{})
+	var speed_changed: bool=selected=="Card_Monument_Speed" and snapshot.get("opening",{}).get("speed_shrine_status",{})!=state.get("opening",{}).get("speed_shrine_status",{})
+	var forest_changed: bool=selected=="Card_GodPower_GodSeed" and snapshot.get("opening",{}).get("god_seed_status",{})!=state.get("opening",{}).get("god_seed_status",{})
+	var finger_changed: bool=selected=="Card_GodPower_FingerOfGod" and snapshot.get("opening",{}).get("finger_status",{}).get("affordable")!=state.get("opening",{}).get("finger_status",{}).get("affordable")
+	var meteor_changed: bool=selected=="Card_GodPower_MeteorStrike" and snapshot.get("opening",{}).get("meteor_status",{})!=state.get("opening",{}).get("meteor_status",{})
+	var settlement_changed: bool=selected.begins_with("Card_GodPower_Settlement_") and snapshot.get("opening",{}).get("settlement_status",{})!=state.get("opening",{}).get("settlement_status",{})
 	snapshot=state
 	var revision: int = state.get("progression",{}).get("revision",-1)
 	var timeline_step: int=state.get("opening",{}).get("timeline_step",-1)
-	if visible and (revision!=last_revision or timeline_step!=last_timeline_step or cliff_changed or collector_changed): redraw()
+	if visible and (revision!=last_revision or timeline_step!=last_timeline_step or cliff_changed or collector_changed or capacity_changed or speed_changed or forest_changed or finger_changed or meteor_changed or settlement_changed): redraw()
 	last_timeline_step=timeline_step
 
 
@@ -368,7 +374,20 @@ func show_detail() -> void:
 			var fountain: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("fountain",{})
 			var cliff: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("cliff_sculpt",{})
 			var collector: Dictionary=snapshot.get("opening",{}).get("collector_status",{})
+			var capacity: Dictionary=snapshot.get("opening",{}).get("capacity_status",{})
+			var speed_shrine: Dictionary=snapshot.get("opening",{}).get("speed_shrine_status",{})
+			var forest: Dictionary=snapshot.get("opening",{}).get("god_seed_status",{})
+			var finger: Dictionary=snapshot.get("opening",{}).get("finger_status",{})
+			var swamp: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("swamp",{})
+			if not swamp.is_empty() and power==swamp["power"]: cost=int(swamp["belief"])
+			var meteor: Dictionary=snapshot.get("opening",{}).get("definition",{}).get("meteor",{})
+			var meteor_power: bool=power==meteor.get("power","")
+			if meteor_power: cost=int(meteor["belief"])
+			var finger_power: bool=power=="GodPower_FingerOfGod" and not finger.is_empty()
 			var collector_power: bool=power=="GodPower_PlaceBeliefCollect" and not collector.is_empty()
+			var capacity_power: bool=power=="GodPower_PlaceCapacity" and not capacity.is_empty()
+			var speed_power: bool=power=="GodPower_PlaceSpeed" and not speed_shrine.is_empty()
+			var forest_power: bool=power=="GodPower_GodSeed" and not forest.is_empty()
 			if not rain.is_empty() and power==rain["power"]:
 				paragraph("%d belief per second" % int(rain["cost_per_second"]))
 			elif not fountain.is_empty() and power==fountain["power"]:
@@ -377,6 +396,10 @@ func show_detail() -> void:
 				var status: Dictionary=snapshot["opening"].get("cliff_status",{})
 				paragraph("%s  %d" % [cliff["layers_label"],int(status.get("layers",cliff["layers"]))])
 			elif collector_power: paragraph("Belief: %d" % int(collector["price"]))
+			elif capacity_power: paragraph("Belief: %d" % int(capacity["price"]))
+			elif speed_power: paragraph("Belief: %d" % int(speed_shrine["price"]))
+			elif forest_power: paragraph("Belief: %d" % int(forest["price"]))
+			elif finger_power: paragraph("Belief: %d" % int(finger["minimum"]))
 			else: paragraph("Belief: %d" % cost)
 			if power=="GodPower_TotemActivate":
 				paragraph("Capacity: %d" % int(p["totem_capacity"]))
@@ -388,9 +411,23 @@ func show_detail() -> void:
 			if not fountain.is_empty() and power==fountain["power"]:
 				cast.disabled=cast.disabled or int(snapshot.get("gems",0))<int(fountain["gems"])
 			if collector_power: cast.disabled=not collector["can_place"]
+			if capacity_power: cast.disabled=not capacity["can_place"]
+			if speed_power: cast.disabled=not speed_shrine["can_place"]
+			if finger_power: cast.disabled=cast.disabled or not finger["affordable"]
+			if meteor_power: cast.disabled=cast.disabled or int(snapshot["belief"])<cost
 			detail.add_child(cast)
 			if power=="GodPower_CliffSculpt": add_power_upgrade(snapshot.get("opening",{}).get("cliff_status",{}),"campaign_cliff_upgrade")
 			if collector_power: add_power_upgrade(collector,"campaign_belief_collector_upgrade")
+			if capacity_power:
+				for offer: Dictionary in capacity["upgrades"]: add_power_upgrade(offer,"campaign_capacity_upgrade")
+			if speed_power:
+				for offer: Dictionary in speed_shrine["upgrades"]: add_power_upgrade(offer,"campaign_speed_shrine_upgrade")
+			if forest_power:
+				for offer: Dictionary in forest["upgrades"]: add_power_upgrade(offer,"campaign_god_seed_upgrade")
+			if meteor_power:
+				for offer: Dictionary in snapshot["opening"].get("meteor_status",{}).get("upgrades",[]): add_power_upgrade(offer,"campaign_meteor_upgrade")
+			var settlement_upgrade: Dictionary=snapshot.get("opening",{}).get("settlement_status",{}).get(power,{})
+			if not settlement_upgrade.is_empty(): add_power_upgrade(settlement_upgrade,"campaign_settlement_upgrade")
 			if not power in p["powers"]:
 				var links := {}
 				for condition: String in p["rules"].get("source_unlocks",{}).get(power,[]):

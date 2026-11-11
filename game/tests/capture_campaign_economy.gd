@@ -23,7 +23,6 @@ func run() -> void:
 	app.session.set_process(false)
 	app.session.store.database_path="res://../build/capture-economy-homeworld.sqlite"
 	if not app.session.world.restore(data,RandomNumberGenerator.new()): quit(1); return
-	app.session.scenery_cached=false
 	app.session.refresh_queries()
 	# The controlled test map uses source rules and art, not original map layout.
 	var campaign := preload("res://infrastructure/campaign_content.gd")

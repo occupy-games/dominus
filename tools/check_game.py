@@ -17,9 +17,16 @@ def run(command, marker=None):
     # autosaving the player's Homeworld, even if they have earned voyage rewards.
     with tempfile.TemporaryDirectory(prefix='dominus-check-', dir=ROOT / 'build') as save_directory:
         environment = dict(os.environ, DOMINUS_SAVE_DIRECTORY=save_directory)
+        timeout = None
         if '--headless' in command:
             command = [command[0], '--log-file', str(Path(save_directory) / 'godot.log'), *command[1:]]
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, env=environment)
+            timeout = 900
+        try:
+            result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, env=environment, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            output = (error.stdout or b'') + (error.stderr or b'')
+            print(output.decode(errors='replace'))
+            raise SystemExit(f'Godot exceeded {timeout} seconds running {command[-1]}.') from None
     output = result.stdout + result.stderr
     if result.returncode or any(error in output for error in ["SCRIPT ERROR:", "ERROR: No loader found", "ERROR: Failed to load"]) or (marker and marker not in output):
         print(output)
@@ -38,6 +45,7 @@ def main():
         ("test_simulation", "Simulation and SQLite integration: 0 failures"),
         ("test_threaded_session", "Threaded fixed-tick ownership: 0 failures"),
         ("test_layer_drags", "Terrain layer geometry: 0 failures"),
+        ("test_sculpt_foundations", "Shrine and totem sculpt foundations: 0 failures"),
         ("test_gameplay", "Gameplay and layer-drag integration: 0 failures"),
         ("test_front_end", "Front-end integration: 0 failures"),
         ("test_game_menu", "Game menu and live configuration controls: 0 failures"),
@@ -88,6 +96,7 @@ def main():
         ("test_chest_factory", "Original chest factory: 43 native cases, 0 failures"),
         ("test_chest_constructor", "Original chest constructor: 106 core cases, 7 factory cases, 0 failures"),
         ("test_chest_lifetime", "Original chest lifetime: 44 cases, 68 transitions, save continuation, 0 failures"),
+        ("test_chest_glints", "Original buried chest glints: 0 failures"),
         ("test_source_availability", "Original reward availability: 67 cases, 268 queries, save continuation, 0 failures"),
         ("test_chest_reward_capacity", "Original chest reward capacity: 7 cases, 21 transitions, save continuation, 0 failures"),
         ("test_weighted_rewards", "Original weighted rewards: 320 draws, 11 era values, 0 failures"),
@@ -139,6 +148,20 @@ def main():
         ("test_tree_response", "Original tree response: 7 terrain cases, 162 scale cases, 0 failures"),
         ("test_campaign_opening", "Authored Homeworld6 rescue and source callbacks: 0 failures"),
         ("test_campaign_mining", "Homeworld6 mining: 0 failures"),
+        ("test_campaign_settlement_upgrades", "Homeworld6 settlement upgrades: 0 failures"),
+        ("test_campaign_late_abodes", "Homeworld6 later population abodes: 0 failures"),
+        ("test_campaign_sticker_era", "Homeworld6 sticker advances and chest bonuses: 0 failures"),
+        ("test_campaign_storm_chests", "Homeworld6 storm chest integration: 0 failures"),
+        ("test_campaign_underwater_sculpt", "Homeworld6 underwater sculpting: 0 failures"),
+        ("test_campaign_swamp", "Homeworld6 Swamp: 0 failures"),
+        ("test_campaign_meteor", "Homeworld6 Meteor Strike: 0 failures"),
+        ("test_campaign_god_seed", "Homeworld6 Holy Forest placement, upgrades and persistence: 0 failures"),
+        ("test_campaign_finger", "Homeworld6 Finger of God: 0 failures"),
+        ("test_campaign_astari_raids", "Homeworld6 Astari raids: 0 failures"),
+        ("test_campaign_astari_village", "Homeworld6 Astari village: 0 failures"),
+        ("test_campaign_capacity_shrine", "Homeworld6 Shrine of Capacity: 0 failures"),
+        ("test_campaign_speed_shrine", "Homeworld6 Shrine of Speed: 0 failures"),
+        ("test_campaign_tree_buff", "Homeworld6 tree belief advances: 0 failures"),
         ("test_campaign_ark", "Homeworld6 Astari and Ark crossing: 0 failures"),
         ("test_weyworld_tutorial", "Weyworld authored tutorial, leash and biomes: 0 failures"),
         ("test_campaign_camera", "Authored trail camera observation and guarded catch-up: 0 failures"),

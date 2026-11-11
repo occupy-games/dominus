@@ -131,6 +131,44 @@ def beautify_loop(objects, media):
             'volume_db': volume_db, 'loop_frames': frames, 'sample_rate': rate}
 
 
+def god_seed_layers(objects, media, files):
+    """Recover the two simultaneous v88 Play actions and their pitch variants."""
+    event_id = event_hash('PLAYSOUND_GODSEED')
+    kind, body = objects[event_id]
+    count, = struct.unpack_from('<I', body)
+    if kind != 4 or count != 2 or len(body) != 12:
+        raise ValueError('Expected two Holy Forest Play actions')
+
+    def properties(key):
+        kind, body = objects[key]
+        base = body[25:] if kind == 2 else body
+        if kind not in (2, 5) or base[1] != 0:
+            raise ValueError('Unsupported Holy Forest bank node')
+        count = base[12]
+        keys = base[13:13 + count]
+        return dict(zip(keys, struct.unpack_from('<' + 'f' * count, base, 13 + count)))
+
+    layers = []
+    for action_id in struct.unpack_from('<2I', body, 4):
+        kind, action = objects[action_id]
+        opcode, target = struct.unpack_from('<HI', action)
+        if kind != 3 or opcode != 0x0403:
+            raise ValueError('Unsupported Holy Forest action')
+        kind, _ = objects[target]
+        media_id, = media_for(objects, media, target)
+        target_properties = properties(target)
+        pitch = target_properties.get(2, 0.0)
+        if kind == 5:
+            variants, _ = children(objects, target)
+            pitches = [pitch + properties(child).get(2, 0.0) for child in variants]
+        else:
+            pitches = [pitch]
+        layers.append({'action': action_id, 'target': target, 'media': files[media_id]['path'],
+                       'volume_db': target_properties.get(0, 0.0), 'pitch_cents': pitches})
+    return {'id': event_id, 'layers': layers, 'default_media': [layer['media'] for layer in layers],
+            'media': [layer['media'] for layer in layers]}
+
+
 def extract(source, output):
     source = Path(source)
     package = source / 'SoundBanks/Mac/GodusMain.pck'
@@ -142,7 +180,8 @@ def extract(source, output):
     cues, names = {}, {'PLAYSOUND_SCULPTLOOP', 'STOPSOUND_SCULPTLOOP',
                          'PLAYSOUND_BEAUTIFY', 'STOPSOUND_BEAUTIFY',
                          'PLAYSOUND_FOLLOWERSTATEBUILD', 'PLAYSOUND_FOLLOWERSTATEFINISHBUILDING',
-                         'PLAYSOUND_FOLLOWERSTATEREACTTOCHEST', 'PLAYSOUND_FOLLOWERSTATECELEBRATECARD'}
+                         'PLAYSOUND_FOLLOWERSTATEREACTTOCHEST', 'PLAYSOUND_FOLLOWERSTATECELEBRATECARD',
+                         'PLAYSOUND_METEORIMPACTWATER'}
     for path in sorted((source / 'VFX/Scripts/anim').glob('*.txt')):
         markers = []
         for time, name in re.findall(r'@([\d.]+):PLAYSOUND=([A-Za-z_0-9]+)', path.read_text(errors='replace')):
@@ -163,6 +202,7 @@ def extract(source, output):
                 'default_media': [files[i]['path'] for i in default_ids]}
         except (ValueError, KeyError, struct.error) as error:
             unsupported.append({'name': name, 'reason': str(error)})
+    events['PLAYSOUND_GODSEED'] = god_seed_layers(objects, media, files)
     for cue in cues.values():
         cue['markers'] = [m for m in cue['markers'] if m['event'] in events]
     from tools.native_scenery_oracle import NativeImage
@@ -182,6 +222,25 @@ def extract(source, output):
     events['Fountain celebration']={'id':fountain_event,'instructions':[hex(fountain_address)],
         'media':[files[i]['path'] for i in media_for(objects,media,fountain_event,False)],
         'default_media':[files[i]['path'] for i in media_for(objects,media,fountain_event)]}
+    finger_address, finger_event = 0x100860dd, 0xa23d9fa8
+    if image.read(finger_address,5)!=b'\x68'+struct.pack('<I',finger_event):
+        raise ValueError('Missing native Finger of God impact binding')
+    events['Finger of God impact']={'id':finger_event,'instructions':[hex(finger_address)],
+        'media':[files[i]['path'] for i in media_for(objects,media,finger_event,False)],
+        'default_media':[files[i]['path'] for i in media_for(objects,media,finger_event)]}
+    swamp_address, swamp_event = 0x1013c383, 0x3235fb29
+    if image.read(swamp_address,5)!=b'\x68'+struct.pack('<I',swamp_event):
+        raise ValueError('Missing native Swamp cast audio binding')
+    events['Swamp cast']={'id':swamp_event,'instructions':[hex(swamp_address)],
+        'media':[files[i]['path'] for i in media_for(objects,media,swamp_event,False)],
+        'default_media':[files[i]['path'] for i in media_for(objects,media,swamp_event)]}
+    for name, address, event_id in [('Meteor Strike launch', 0x100f7466, 0x3f9de541),
+                                    ('Meteor Strike impact', 0x100f86b9, 0x41ca570e)]:
+        if image.read(address,5)!=b'\x68'+struct.pack('<I',event_id):
+            raise ValueError(f'Missing native {name} audio binding')
+        events[name]={'id':event_id,'instructions':[hex(address)],
+            'media':[files[i]['path'] for i in media_for(objects,media,event_id,False)],
+            'default_media':[files[i]['path'] for i in media_for(objects,media,event_id)]}
     collection_address, collection_event = 0x1003d15a, 0x33a63352
     if image.read(collection_address,5)!=b'\x68'+struct.pack('<I',collection_event):
         raise ValueError('Missing native belief collection audio binding')

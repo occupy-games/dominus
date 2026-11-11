@@ -163,7 +163,7 @@ static func harvest_rate(state: Dictionary, field: Dictionary) -> float:
 	var modifiers: Dictionary = configuration(state).get("production_modifiers",{})
 	for unlock: String in modifiers:
 		if Unlocks.enabled(state["progression"],unlock): rate*=float(modifiers[unlock].get(key,1))
-	return rate
+	return preload("res://simulation/campaign_god_seed.gd").harvest_rate(state,field,rate)
 
 
 static func build_ticks(state: Dictionary, house: Dictionary) -> int:
@@ -181,7 +181,7 @@ static func spends_resource(state: Dictionary, resource: String) -> bool:
 
 
 static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary,rain: Dictionary={}) -> bool:
-	if not agent.has("workplace") or agent["job"]!=-1: return false
+	if not agent.has("workplace") or agent["job"]!=-1 or agent.has("leash_goal"): return false
 	var field := {}
 	for home: Dictionary in state["homes"]:
 		if int(home["id"])==int(agent["workplace"]): field=home; break
@@ -218,9 +218,12 @@ static func update_agent(world: RefCounted,state: Dictionary,agent: Dictionary,r
 				field["harvest_accumulator"]-=int(agent["carrying"])
 		return true
 	if agent["path"].is_empty(): agent["path"]=world._route(origin,target)
+	world.finish_promised_approach(agent,target)
 	if agent["path"].is_empty(): agent["state"]="waiting"; return true
 	var cell := int(agent["path"][0])
-	var next := Vector2(agent["x"],agent["z"]).move_toward(Vector2(cell%int(state["width"]),cell/int(state["width"])),float(world.follower_values(agent).get("RouteSpeed",world.runtime_value("follower_speed",1.3)))*0.1)
+	var position:=Vector2(agent["x"],agent["z"])
+	var base_speed:=float(world.follower_values(agent).get("RouteSpeed",world.runtime_value("follower_speed",1.3)))
+	var next:=position.move_toward(Vector2(cell%int(state["width"]),cell/int(state["width"])),float(world.source_route_speed(base_speed,position))*0.1)
 	agent["x"]=next.x
 	agent["z"]=next.y
 	agent["state"]="carrying" if returning else "walking"

@@ -43,6 +43,10 @@ var tree_response_revision := -1
 var tree_tick := -1
 var tree_clock := 0.0
 var tree_between := 0.0
+var tree_fires: Dictionary = {}
+var charred_trees: Dictionary = {}
+var indexed_trees: Array = []
+var planted_ticks: Dictionary = {}
 const TreeAnimation = preload("res://presentation/world/source_tree_animation.gd")
 
 func configure(assets: Dictionary,rocks: bool) -> void:
@@ -83,11 +87,19 @@ func update(data: Dictionary,area: Rect2i) -> void:
 				var key := Vector2i((cell%width)/TILE,(cell/width)/TILE)
 				if not index.has(key): index[key]=[]
 				index[key].append(cell)
-		else:
-			for item: Dictionary in state["trees"]:
-				var key := Vector2i(int(item["x"])/TILE,int(item["z"])/TILE)
-				if not index.has(key): index[key]=[]
-				index[key].append(item)
+	var trees_changed: bool=not rock_mode and not is_same(indexed_trees,state["trees"])
+	if trees_changed:
+		var previous := index
+		index={}
+		planted_ticks.clear()
+		indexed_trees=state["trees"]
+		for item: Dictionary in indexed_trees:
+			var key := Vector2i(int(item["x"])/TILE,int(item["z"])/TILE)
+			if not index.has(key): index[key]=[]
+			index[key].append(item)
+			if item.has("planted_tick"): planted_ticks[int(item["cell"])]=int(item["planted_tick"])
+		for key: Vector2i in index:
+			if previous.get(key,[])!=index[key]: vegetation_tiles[key]=true
 	if rock_mode: receive_motion()
 	elif state.has("tree_response"): receive_trees()
 	var next_rocks: int=state.get("progression",{}).get("rock_revision",0)
@@ -101,7 +113,7 @@ func update(data: Dictionary,area: Rect2i) -> void:
 		for cell: String in removed_trees:
 			if not next_removed.has(cell): vegetation_tiles[Vector2i((int(cell)%int(state["width"]))/TILE,(int(cell)/int(state["width"]))/TILE)]=true
 		removed_trees=next_removed
-	var changed: bool = structural or vegetation_changed
+	var changed: bool = structural or vegetation_changed or trees_changed
 	if changed:
 		lod=next_lod
 		if structural: generation+=1
@@ -207,12 +219,14 @@ func build_tile(key: Vector2i) -> void:
 		var multi := MultiMesh.new()
 		multi.transform_format=MultiMesh.TRANSFORM_3D
 		multi.mesh=template.mesh
+		multi.use_colors=not rock_mode and has_finger_trees()
 		multi.instance_count=groups[variant].size()
 		var transforms := PackedFloat32Array()
-		transforms.resize(multi.instance_count*12)
+		var stride := 16 if multi.use_colors else 12
+		transforms.resize(multi.instance_count*stride)
 		for i in range(multi.instance_count):
 			var point: Vector3=groups[variant][i]
-			var offset := i*12
+			var offset := i*stride
 			transforms[offset]=0.003
 			transforms[offset+3]=point.x
 			transforms[offset+5]=0.003
@@ -226,6 +240,8 @@ func build_tile(key: Vector2i) -> void:
 					transforms[offset+8]=-sin(angle)*0.003
 					transforms[offset+10]=cos(angle)*0.003
 			transforms[offset+11]=point.z
+			if multi.use_colors:
+				for component in range(12,16): transforms[offset+component]=1.0
 		multi.buffer=transforms
 		var node := MultiMeshInstance3D.new()
 		node.multimesh=multi
@@ -286,6 +302,7 @@ func tree_ray_distance(tree: Dictionary,cell: int,origin: Vector3,direction: Vec
 		var scale_: float=instance.get("scale",1.0)
 		if scale_<=0.0: return INF
 		transform.basis=transform.basis.scaled(Vector3.ONE*scale_)
+		transform.origin.y+=float(instance.get("vertical_offset",0.0))
 	var inverse := transform.affine_inverse()
 	var hit: Variant=templates[variant].mesh.get_aabb().intersects_ray(inverse*origin,inverse.basis*direction)
 	return origin.distance_to(transform*hit) if hit!=null else INF
@@ -379,10 +396,12 @@ func make_imposter_batch(groups: Dictionary,point_cells: Dictionary={},tile: Vec
 	var multi := MultiMesh.new()
 	multi.transform_format=MultiMesh.TRANSFORM_3D
 	multi.use_custom_data=true
+	multi.use_colors=has_finger_trees()
 	multi.mesh=imposter_mesh
 	multi.instance_count=count
 	var buffer := PackedFloat32Array()
-	buffer.resize(count*16)
+	var stride := 20 if multi.use_colors else 16
+	buffer.resize(count*stride)
 	var index_ := 0
 	var texture_size: Vector2=imposters["texture"].get_size()
 	var bindings: Array=[]
@@ -396,14 +415,16 @@ func make_imposter_batch(groups: Dictionary,point_cells: Dictionary={},tile: Vec
 			sprite_shapes[variant]={"width":height*float(rect[2])/float(rect[3]),"height":height,"center":bounds.get_center().y*0.003,"rect":Vector4(float(rect[0])/texture_size.x,float(rect[1])/texture_size.y,float(rect[2])/texture_size.x,float(rect[3])/texture_size.y)}
 		var shape: Dictionary=sprite_shapes[variant]
 		for point: Vector3 in groups[variant]:
-			var offset := index_*16
+			var offset := index_*stride
 			buffer[offset]=shape["width"]
 			buffer[offset+3]=point.x
 			buffer[offset+5]=shape["height"]
 			buffer[offset+7]=point.y+shape["center"]
 			buffer[offset+10]=1
 			buffer[offset+11]=point.z
-			for component in range(4): buffer[offset+12+component]=shape["rect"][component]
+			if multi.use_colors:
+				for component in range(12,16): buffer[offset+component]=1.0
+			for component in range(4): buffer[offset+stride-4+component]=shape["rect"][component]
 			if state.has("tree_response") and point_cells.has(point):
 				bindings.append({"cell":int(point_cells[point]),"index":index_,"point":point,"shape":shape})
 			index_+=1
@@ -431,6 +452,7 @@ func receive_trees() -> void:
 		tree_tick=int(state["tick"])
 		tree_clock=tree_tick*0.1
 		tree_between=0.0
+	receive_tree_fires()
 	var revision_: int=state["tree_response"]["revision"]
 	if tree_response_revision==revision_: return
 	tree_response_revision=revision_
@@ -444,9 +466,26 @@ func receive_trees() -> void:
 	advance_trees(0.0)
 
 
+func has_finger_trees() -> bool:
+	return state.get("opening",{}).get("definition",{}).has("finger_of_god")
+
+
+func receive_tree_fires() -> void:
+	var opening: Dictionary=state["opening"]
+	var fires: Dictionary=opening.get("finger_fires",{})
+	var charred: Dictionary=opening.get("finger_burned",{})
+	if tree_fires==fires and charred_trees==charred: return
+	for key: String in tree_fires.keys()+fires.keys()+charred_trees.keys()+charred.keys():
+		var cell := int(key)
+		if tree_instances.has(cell) and (tree_fires.get(key)!=fires.get(key) or charred_trees.get(key)!=charred.get(key)):
+			tree_motion[cell]=true
+	tree_fires=fires
+	charred_trees=charred
+
+
 func bind_tree(cell: int,multi: MultiMesh,node: MultiMeshInstance3D,index_: int,tile: Vector2i,transform: Transform3D,center: float) -> void:
 	tree_instances[cell]={"multi":multi,"node":node,"index":index_,"tile":tile,"base":transform,"center":center,
-		"transform":transform,"response":state["tree_response"]["entries"].get(str(cell),{})}
+		"transform":transform,"planted_tick":planted_ticks.get(cell,-1),"response":state["tree_response"]["entries"].get(str(cell),{})}
 	node.custom_aabb=node.custom_aabb.merge(AABB(transform.origin-Vector3.ONE*5,Vector3.ONE*10))
 	tree_motion[cell]=true
 	advance_tree(cell)
@@ -466,10 +505,30 @@ func advance_tree(cell: int) -> void:
 	var changed := float(response.get("changed_ms",0.0))
 	var enabled: bool=response.get("enabled",true)
 	var scale_ := TreeAnimation.scale_at(config,enabled,now,changed)
+	var vertical_offset := 0.0
+	var emerging := false
+	if enabled and int(entry["planted_tick"])>=0:
+		var forest: Dictionary=state["opening"]["definition"]["god_seed"]
+		var growth := clampf((now-float(entry["planted_tick"])*0.1)/float(forest["emerge_seconds"]),0.0,1.0)
+		emerging=growth<1.0
+		scale_=TreeAnimation.f32((scale_*0.8+0.2)*growth)
+		if bool(forest["rise"]): vertical_offset=-float(forest["sink_distance"])*(1.0-growth)
+	var fire_active := tree_fires.has(str(cell))
+	if entry["multi"].use_colors:
+		var rules: Dictionary=state["opening"]["definition"]["finger_of_god"]
+		var charred := 1.0 if charred_trees.has(str(cell)) else 0.0
+		if fire_active:
+			charred=clampf(1.0-(float(tree_fires[str(cell)])*0.1-now)*float(rules["burn_rate"]),0.0,1.0)
+		var tint := 1.0-charred*float(rules["burn_tint"])
+		if entry.get("tint",1.0)!=tint:
+			entry["multi"].set_instance_color(int(entry["index"]),Color(tint,tint,tint))
+			entry["tint"]=tint
+		if entry["multi"].use_custom_data: scale_*=lerpf(1.0,float(rules["burn_imposter_scale"]),charred)
 	var transform: Transform3D=entry["base"]
 	transform.basis=transform.basis.scaled(Vector3.ONE*scale_)
-	transform.origin.y+=float(entry["center"])*(scale_-1.0)
+	transform.origin.y+=float(entry["center"])*(scale_-1.0)+vertical_offset
 	entry["multi"].set_instance_transform(int(entry["index"]),transform)
 	entry["transform"]=transform
 	entry["scale"]=scale_
-	if not enabled or now-changed/1000.0>=float(config["duration"]): tree_motion.erase(cell)
+	entry["vertical_offset"]=vertical_offset
+	if not enabled or not fire_active and not emerging and now-changed/1000.0>=float(config["duration"]): tree_motion.erase(cell)

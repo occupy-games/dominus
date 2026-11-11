@@ -1,7 +1,7 @@
 extends RefCounted
 ## Homeworld6's authored Astari festival and Ark construction tutorial.
 
-const Happiness = preload("res://simulation/happiness.gd")
+const Astari = preload("res://simulation/campaign_astari.gd")
 const Progression = preload("res://simulation/progression.gd")
 const Unlocks = preload("res://simulation/source_unlocks.gd")
 
@@ -16,7 +16,7 @@ static func board(home: Dictionary,follower: Dictionary) -> void:
 	if home.is_empty() or home["residents"]>=home["capacity"]: return
 	home["ark_crew"][str(follower["id"])]=true
 	home["residents"]+=1
-	for key: String in ["away_home","entering_home","repair_site","leash_goal","ark_boarding"]:
+	for key: String in ["away_home","entering_home","repair_site","leash_goal","ark_boarding","workplace","profession","settlement_id","carrying"]:
 		follower.erase(key)
 	follower.merge({"state":"indoors","indoors_home":home["id"],"x":float(home["work_x"]),"z":float(home["work_z"]),"path":[],"job":-1},true)
 
@@ -36,26 +36,14 @@ static func advance(world: RefCounted,state: Dictionary,tutorial: RefCounted,eve
 			opening["ark_progress"]=status
 			status["next_scan"]=tick
 			tutorial.show_ark_message(5707,rules["beacon_id"])
-		if status.has("festival_until"):
-			if tick>=int(status["festival_until"]):
-				status.erase("festival_until")
-				p["script_unlocks"]["winAstari"]=true
-				p["revision"]+=1
-				events.append({"type":"campaign_astari_festival_ended"})
-		elif not Unlocks.enabled(p,"InfluenceTakeover") and tick>=int(status["next_scan"]):
+		if not Unlocks.enabled(p,"InfluenceTakeover") and not state.get("astari_village",{}).get("forced",false) and tick>=int(status["next_scan"]):
 			status["next_scan"]=tick+roundi(float(rules["scan_seconds"])*10)
 			var statue: Array=rules["astari"]
 			var center:=Vector2(statue[0],statue[1])
 			for follower: Dictionary in state["followers"]:
 				if follower.get("allegiance",0)!=0 or not follower.get("profession","") in ["","builder"] or follower["state"]=="indoors": continue
 				if center.distance_to(Vector2(follower["x"],follower["z"]))>float(statue[2]): continue
-				var festival: Dictionary=rules["festival"]
-				if not p.has("script_unlocks"): p["script_unlocks"]={}
-				if not p.has("happiness"): p["happiness"]=Happiness.initial(p["rules"])
-				p["happiness"]["player"]=clampf(float(p["happiness"]["player"])+float(festival["AdjustHappiness"]),0,1)
-				p["happiness"]["astari"]=clampf(float(p["happiness"]["astari"])+float(festival["AdjustAstariHappiness"]),0,1)
-				status["festival_until"]=tick+roundi(float(festival["AstariFestivalLength"])*10)
-				events.append({"type":"campaign_astari_festival_started"})
+				Astari.force_festival(world,state,world._random,events)
 				break
 		return
 	if not status.get("conquered",false):

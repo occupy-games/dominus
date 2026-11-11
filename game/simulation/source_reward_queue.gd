@@ -112,6 +112,11 @@ static func gems(state: Dictionary,amount: int,description: String,source_id: in
 	state["gems"]=(int(state["gems"])+amount)&MASK
 
 
+static func gem_credit_amount(pack_count: int,pack_index: int) -> int:
+	if pack_count<=0: return 1
+	return pack_count if pack_index==0 else 0
+
+
 static func admit(state: Dictionary,availability: Dictionary,records: Dictionary,rules: Dictionary,limits: Dictionary,reward: int,kind: int,flags: int,reason: int,source_id: int,mode: int,service: Callable,events: Array) -> bool:
 	if not valid(state) or not Availability.valid(availability) or not valid_records(records) or not valid_rules(rules) or not Availability.valid_rules(limits) or not service.is_valid(): return false
 	for value: int in [reward,kind,flags,reason,source_id,mode]:
@@ -154,14 +159,12 @@ static func admit(state: Dictionary,availability: Dictionary,records: Dictionary
 			source=MASK
 		else: log_(service,rules,"0x104ac7ec",55,[signed(source)])
 		var count := int(service.call("pack_count",[]))
+		var amount := gem_credit_amount(count,int(service.call("pack_index",[])) if count>0 else 0)
 		if count>0:
-			if int(service.call("pack_index",[]))==0:
-				log_(service,rules,"0x104ac7b8",55,[count])
-				gems(state,count,description,MASK if source==0 else source,service)
+			if amount>0: log_(service,rules,"0x104ac7b8",55,[count])
 			else: log_(service,rules,"0x104ac770",55)
-		else:
-			log_(service,rules,"0x104ac740",55)
-			gems(state,1,description,MASK if source==0 else source,service)
+		else: log_(service,rules,"0x104ac740",55)
+		if amount>0: gems(state,amount,description,MASK if source==0 else source,service)
 	log_(service,rules,"0x104ac728",5)
 	state["queue"].append(entry)
 	service.call("changed",[])

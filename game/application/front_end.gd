@@ -162,7 +162,8 @@ func record_adventure() -> void:
 	var needed := {}
 	if is_instance_valid(home_session):
 		var home: Dictionary = home_session.presentation_snapshot()
-		era=int(home.get("progression",{}).get("age",1))
+		var progression: Dictionary=home.get("progression",{})
+		era=int(progression.get("sticker_era",progression.get("age",1)))
 		needed=preload("res://simulation/voyage_rewards.gd").needed(home,AdventureContent.reward_rules())
 	var updated := preload("res://simulation/voyage_rewards.gd").record(adventure_profile,state,AdventureContent.reward_rules(),random,era,needed)
 	if updated==adventure_profile: return
@@ -281,6 +282,8 @@ func show_game(fresh: bool = true, campaign: Dictionary = {}) -> void:
 			if not next_id.is_empty(): show_adventure(next_id,int(view.voyage_definition.get("difficulty",0))))
 	if view.campaign_mode: view.campaign_cards = preload("res://infrastructure/campaign_content.gd").card_assets()
 	if view.campaign_mode: view.hud_textures = preload("res://infrastructure/ui_content.gd").textures()
+	if view.campaign_mode and not in_lesson and view.voyage_definition.is_empty():
+		view.world_view.chest_glints.configure(Content.new().chest_glint())
 	if not campaign_definition.is_empty():
 		if view.voyage_definition.is_empty(): view.power_assets = preload("res://infrastructure/progression_content.gd").power_assets(campaign_definition)
 		view.world_view.bathymetry = campaign_definition["bathymetry"]
@@ -297,6 +300,9 @@ func show_game(fresh: bool = true, campaign: Dictionary = {}) -> void:
 	view.resolve_building = catalog.building_data
 	view.resolve_unit = catalog.unit_data
 	view.world_view.resolve_worker = catalog.worker_data
+	view.world_view.resolve_archer = catalog.astari_archer_data
+	view.world_view.resolve_astari_civilian = catalog.astari_civilian_data
+	view.world_view.resolve_arrow_reaction = catalog.arrow_reaction_data
 	view.inspect_action = session.inspect
 	view.inspect_building = session.inspect_building
 	view.building_info_labels = preload("res://infrastructure/building_info.gd").content().get("labels",{})

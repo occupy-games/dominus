@@ -133,7 +133,7 @@ static func rules(definition: Dictionary) -> Dictionary:
 static func power_assets(definition: Dictionary) -> Dictionary:
 	var result := {}
 	var sheet: Texture2D = load("res://assets/extracted/sprites/Icon_GodPowers_NewSheet.png")
-	var ids := {"GodPower_TotemActivate":1,"GodPower_Totem":2,"GodPower_Beautify":9,"GodPower_FingerOfGod":19,"GodPower_RainOfPurity":20}
+	var ids := {"GodPower_TotemActivate":1,"GodPower_Totem":2,"GodPower_Beautify":9,"GodPower_PlaceSpeed":16,"GodPower_FingerOfGod":19,"GodPower_RainOfPurity":20,"GodPower_Swamp":23,"GodPower_MeteorStrike":25}
 	for power: String in ids:
 		for row: Array in definition["tables"].get("gui/miracledata.csv",[]):
 			if row.size()<9 or not str(row[0]).is_valid_int() or int(row[0])!=ids[power]: continue

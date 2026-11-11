@@ -1,4 +1,4 @@
-"""Compile the curves used by the supplied Beautify emitters."""
+"""Compile the curves used by the original particle emitters."""
 from bisect import bisect_left, bisect_right
 from fractions import Fraction
 import math
@@ -19,7 +19,22 @@ def handle(key, side):
     return [float32(value * key['weight']) for value in key[side]]
 
 
-def compile_keys(keys, cubic_step):
+def clip_cubic(points, duration, base, bounds):
+    """Keep the native cubic samples within the key's time and value ranges."""
+    clipped = [points[0]]
+    for left, right in zip(points, points[1:]):
+        x0, y0 = left
+        x1, y1 = right
+        for edge in (0.0, duration):
+            if min(x0, x1) < edge < max(x0, x1):
+                clipped.append([edge, float32(y0 + (y1 - y0) * (edge - x0) / (x1 - x0))])
+        if 0.0 <= x1 <= duration:
+            clipped.append(right)
+    minimum, maximum = bounds
+    return [[x, float32(min(maximum - base, max(minimum - base, y)))] for x, y in clipped]
+
+
+def compile_keys(keys, cubic_step, bounds=None):
     """Build the source compiler's per-key table of relative time and value."""
     compiled = [[key['time'], scalar(key['value_bits']), []] for key in keys]
     if not all(math.isfinite(point[1]) for point in compiled):
@@ -28,8 +43,12 @@ def compile_keys(keys, cubic_step):
         start, value, _ = compiled[index]
         end, next_value, _ = compiled[index + 1]
         delta = [end - start, next_value - value]
-        if delta[0] <= 0.0:
-            raise ValueError("Expected strictly ordered particle keys")
+        if delta[0] < 0.0:
+            raise ValueError("Expected ordered particle keys")
+        # Consecutive keys at one time are an authored jump. The evaluator
+        # selects the last of them at that time, without a zero-length segment.
+        if delta[0] == 0.0:
+            continue
         if left['flags'][0] and right['flags'][0]:
             compiled[index][2] = [[0.0, 0.0], [float32(d) for d in delta]]
             continue
@@ -43,7 +62,9 @@ def compile_keys(keys, cubic_step):
             points.append([float32(3.0 * inv * inv * t * first
                                   + 3.0 * inv * t * t * (d + last) + t * t * t * d)
                            for d, first, last in zip(delta, outgoing, incoming)])
-        if any(a[0] >= b[0] for a, b in zip(points, points[1:])):
+        if bounds is not None:
+            points = clip_cubic(points, delta[0], value, bounds)
+        if any(a[0] > b[0] for a, b in zip(points, points[1:])):
             raise ValueError("Particle curve requires unsupported time clipping")
         compiled[index][2] = points
     return compiled
@@ -61,8 +82,11 @@ def sample_curve(keys, conversion, time):
         start = float32(base + points[index][1])
         end = float32(base + points[index + 1][1])
         span = float32(times[index + 1] - times[index])
-        slope = float32((end - start) / span)
-        value = float32(start + float32(float32(time - times[index]) * slope))
+        if span > 0:
+            slope = float32((end - start) / span)
+            value = float32(start + float32(float32(time - times[index]) * slope))
+        else:
+            value = end
     return convert_value(value, conversion)
 
 

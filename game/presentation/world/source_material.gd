@@ -49,7 +49,7 @@ void fragment() {
     vec4 diffMap = texture(source_texture, UV);
     vec3 tintOutput = mix(vec3(0.5), tint1.rgb, diffMap.g);
     tintOutput = mix(tintOutput, tint2.rgb, diffMap.b);
-    ALBEDO = god_influence_color(linearTint(diffMap.r, tintOutput),source_position.xz);
+    ALBEDO = god_influence_color(linearTint(diffMap.r, tintOutput)*COLOR.rgb,source_position.xz);
     ROUGHNESS = 1.0;
 }"""
 	var material := ShaderMaterial.new()

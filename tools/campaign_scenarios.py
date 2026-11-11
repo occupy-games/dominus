@@ -16,6 +16,7 @@ from tools.day_cycle import extract as day_cycle
 from tools.map_objects import authored_rocks
 from tools.abode_clumps import extract as clump_rules
 from tools.native_scenery_oracle import NativeImage
+from tools.meteor import extract as meteor_rules
 from tools.original_assets import FOLLOWER_CLIPS, decode_animation, decode_skeleton, iw_hash, resource_group
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +178,200 @@ def belief_advances(files, image, levels, unlocks, powers, config, localization)
                  'title_key':temple[7],'description_key':temple[11],
                  'upgrades':upgrades,'native_instructions':list(native)}
     return rock,collector,[modifier_path,value_path]
+
+
+def capacity_shrine(files, parser, values, localization, source):
+    power_path = 'initialworldsetup/powerdata.csv'
+    scope = 'initialworldsetup6'
+    power = next(row for row in rows(files, power_path) if row[0] == 'GodPower_PlaceCapacity')
+    card = 'Card_Capacity_1'
+    level = next(row for row in rows(files, f'{scope}/populationlevels.csv') if row[1] == card)
+    unlocks = rows(files, f'{scope}/unlocks.csv')
+    if power[2:6] != ['PLACEBUILDING', '1', 'STATUE', 'Monument_Family'] or power[8] != 'INSTANT' or not any(
+            row[:2] == [power[0], card + '_COMPLETED'] for row in unlocks):
+        raise CompileError('Unexpected Shrine of Capacity power')
+    type_path = 'balance/templetypes.csv'
+    types = [row for row in rows(files, type_path)[1:] if row[0] and not row[0].startswith('#')]
+    temple_index, temple = next((i, row) for i, row in enumerate(types, 1) if row[0] == power[5])
+    shape_path = 'balance/templegenerictypes.csv'
+    shape = next(row for row in rows(files, shape_path) if row[0] == temple[1])
+    model_group = shape[3] + '.group.bin'
+    effects_path = 'balance/templeupgrades.csv'
+    effects = [row for row in rows(files, effects_path)[1:] if row[0] and not row[0].startswith('#')]
+    family = {i: row for i, row in enumerate(effects, 1) if row[0] == temple[0]}
+    if len(family) != 2 or any(row[1] != 'AlwaysUnlocked' or row[4:6] != ['0', '0'] for row in family.values()):
+        raise CompileError('Unexpected Shrine of Capacity effects')
+    bonuses = {}
+    for index, row in family.items():
+        prefix = 'table,House Values,Capacity, +'
+        if not row[2].startswith(prefix):
+            raise CompileError('Unexpected Shrine of Capacity stat')
+        bonuses[index] = int(row[2].removeprefix(prefix))
+    modifier_path = 'balance/balanceunlockmodifier.csv'
+    modifiers = [(row[0], [part.strip() for part in row[1].split(',')])
+                 for row in rows(files, modifier_path)[1:] if len(row) > 1 and row[1]]
+    upgrade_path = 'gui/powerupgradedata.csv'
+    base_radius = float(temple[3])
+    base_flags = {i: int(row[3]) for i, row in family.items()}
+    bonus = sum(bonuses[i] for i in base_flags if base_flags[i])
+    upgrades = []
+    for row in rows(files, upgrade_path)[1:]:
+        if row[0] != 'Card_Monument_Capacity':
+            continue
+        if row[2] != 'AlwaysUnlocked' or row[4] not in ('WHEAT', 'GEMS') or row[5] != 'UPGRADE':
+            raise CompileError('Unexpected Shrine of Capacity upgrade')
+        unlock = next(item[0] for item in unlocks if item[1] == row[1])
+        radius = base_radius
+        abode_flags = base_flags.copy()
+        for condition, operation in modifiers:
+            if condition != unlock:
+                continue
+            if operation[:3] == ['Table', 'Temple Types', 'radius outside settlement']:
+                if int(operation[3]) != temple_index or not operation[4].startswith('m'):
+                    raise CompileError('Capacity radius upgrade points at another temple')
+                radius *= float(operation[4][1:])
+            elif operation[:3] == ['Table', 'Temple Upgrades', 'abode']:
+                index = int(operation[3])
+                if index not in abode_flags:
+                    raise CompileError('Capacity stat upgrade points at another temple')
+                abode_flags[index] = int(operation[4])
+        upgrade = {'id': row[1], 'cost': int(row[3]), 'currency': row[4].lower(),
+                   'button': text(row[6], localization), 'title': text(row[7], localization),
+                   'description': text(row[8], localization)}
+        if radius != base_radius:
+            upgrade['radius'] = radius
+        if abode_flags != base_flags:
+            upgrade['bonus'] = sum(bonuses[i] for i in abode_flags if abode_flags[i])
+        upgrades.append(upgrade)
+    if len(upgrades) != 2:
+        raise CompileError('Missing Shrine of Capacity upgrades')
+    messages = {}
+    for index, entry in assignment(parser, 'uiTable.Monuments')[1]:
+        source_id = literal(index, values)
+        item = {'group': 'Monuments', 'source_id': source_id}
+        for key, value in entry[1]:
+            if key[1] in ('strType', 'pos2d'):
+                item[key[1]] = literal(value, values)
+            elif key[1] == 'msg':
+                name = literal(value, values)
+                item.update(key=name, text=text(name, localization))
+        messages[str(6000 + source_id)] = item
+    return ({'card': card, 'population': int(level[0]), 'power': power[0], 'temple_type': temple[0],
+             'model': model_group + ':%08x' % iw_hash('rank1_loc1_var1_storey1'),
+             'model_sha256': hashlib.sha256((source / model_group).read_bytes()).hexdigest(),
+             'width': int(shape[1]), 'depth': int(shape[2]), 'radius': base_radius, 'bonus': bonus,
+             'prices': [int(price) for price in power[10:16] if price], 'upgrades': upgrades,
+             'title_key': temple[8], 'description_key': temple[11]},
+            messages, [type_path, shape_path, effects_path, modifier_path, upgrade_path])
+
+
+def speed_shrine(files, tables, power_path, localization, source):
+    card = 'Card_Speed_1'
+    level = next(row for row in tables['initialworldsetup6/grainlevels.csv'] if row[1] == card)
+    unlocks = tables['initialworldsetup6/unlocks.csv']
+    power = next(row for row in rows(files, power_path) if row[0] == 'GodPower_PlaceSpeed')
+    if power[2:6] != ['PLACEBUILDING', '1', 'STATUE', 'Monument_Speed'] or power[8] != 'INSTANT' or not any(
+            row[:2] == [power[0], card + '_COMPLETED'] for row in unlocks):
+        raise CompileError('Unexpected Shrine of Speed unlock or placement')
+    type_path = 'balance/templetypes.csv'
+    types = [row for row in rows(files, type_path)[1:] if row[0] and not row[0].startswith('#')]
+    temple_index, temple = next((i, row) for i, row in enumerate(types, 1) if row[0] == power[5])
+    shape_path = 'balance/templegenerictypes.csv'
+    shape = next(row for row in rows(files, shape_path) if row[0] == temple[1])
+    model_group = shape[3] + '.group.bin'
+    effect_path = 'balance/templeupgrades.csv'
+    effects = []
+    for row in rows(files, effect_path)[1:]:
+        if row[0] != temple[0]:
+            continue
+        table, family, stat, multiplier = [part.strip() for part in row[2].split(',')]
+        if (table, family, stat) != ('table', 'race', 'RouteSpeed') or not multiplier.startswith('m'):
+            raise CompileError('Unexpected Shrine of Speed stat effect')
+        effects.append({'unlock': row[1], 'multiplier': float(multiplier[1:])})
+    modifier_path = 'balance/balanceunlockmodifier.csv'
+    upgrade_path = 'gui/powerupgradedata.csv'
+    modifiers = rows(files, modifier_path)
+    base_radius = float(temple[3])
+    upgrades = []
+    for row in rows(files, upgrade_path)[1:]:
+        if row[0] != 'Card_Monument_Speed':
+            continue
+        if row[2] != 'AlwaysUnlocked' or row[4] not in ('WHEAT', 'ORE') or row[5] != 'UPGRADE':
+            raise CompileError('Unexpected Shrine of Speed upgrade')
+        unlock = next(entry[0] for entry in unlocks if entry[1] == row[1])
+        upgrade = {'id': row[1], 'unlock': unlock, 'cost': int(row[3]), 'currency': row[4].lower(),
+                   'button': text(row[6], localization), 'title': text(row[7], localization),
+                   'description': text(row[8], localization)}
+        for modifier in modifiers:
+            if modifier[0] != unlock:
+                continue
+            operation = [part.strip() for part in modifier[1].split(',')]
+            if operation[:4] != ['Table', 'Temple Types', 'radius outside settlement', str(temple_index)] or not operation[4].startswith('m'):
+                raise CompileError('Unexpected Shrine of Speed radius modifier')
+            upgrade['radius'] = base_radius * float(operation[4][1:])
+        upgrades.append(upgrade)
+    if len(effects) != 2 or len(upgrades) != 2:
+        raise CompileError('Incomplete Shrine of Speed effects or upgrades')
+    authored = [row[8] for row in tables['initialworldsetup6/templepositions.csv'] if row[0] == temple[0]]
+    return {'card': card, 'fields': int(level[0]), 'power': power[0], 'temple_type': temple[0],
+            'model': model_group + ':%08x' % iw_hash('rank1_loc1_var1_storey1'),
+            'model_sha256': hashlib.sha256((source / model_group).read_bytes()).hexdigest(),
+            'width': int(shape[1]), 'depth': int(shape[2]), 'radius': base_radius,
+            'prices': [int(price) for price in power[10:16] if price], 'effects': effects,
+            'upgrades': upgrades, 'authored_sites': authored, 'title_key': temple[7], 'description_key': temple[11]}, [
+                type_path, shape_path, effect_path, modifier_path, upgrade_path]
+
+
+def settlement_upgrades(files, unlocks, config, localization):
+    """Recover the three Homeworld settlement upgrade sequences and their effects."""
+    upgrade_path = 'gui/powerupgradedata.csv'
+    modifier_path = 'balance/balanceunlockmodifier.csv'
+    upgrade_rows = rows(files, upgrade_path)
+    modifiers = [(row[0], [part.strip() for part in row[1].split(',')])
+                 for row in rows(files, modifier_path) if len(row) > 1 and row[1]]
+    result = {}
+    for number, role, radius_slot in [(1, 'Builder', 2), (2, 'Farmer', 1), (3, 'Miner', 3)]:
+        radius_key = f'SettCompRadius{radius_slot}'
+        population_key = f'Settlement{role}MaxPop'
+        base_population = int(config[population_key])
+        population = base_population
+        workers = None
+        base_workers = None
+        offers = []
+        card = f'Card_GodPower_Settlement_{number}'
+        for rank, row in enumerate((row for row in upgrade_rows if row and row[0] == card), 2):
+            if row[2] != 'AlwaysUnlocked' or row[4] not in ('GEMS', 'WHEAT', 'ORE') or row[5] != 'UPGRADE':
+                raise CompileError('Unexpected settlement upgrade')
+            keys = [entry[0] for entry in unlocks if entry[1] == row[1]]
+            if len(keys) != 1:
+                raise CompileError('Missing settlement upgrade unlock')
+            unlock = keys[0]
+            effects = {parts[1]: int(parts[2][1:]) for key, parts in modifiers
+                       if key == unlock and len(parts) == 3 and parts[0] == 'Config' and parts[2].startswith('p')}
+            if set(effects) != {radius_key, population_key}:
+                raise CompileError('Missing settlement population or compression radius modifier')
+            population += effects[population_key]
+            if population != int(config[f'{population_key}_Lv{rank}']):
+                raise CompileError('Settlement upgrade disagrees with original population limit')
+            description = text(row[8], localization).replace('\\n', '\n')
+            limit = re.search(rf'Max {role}s:\s*(\d+)(?:\(\+(\d+)\))?', description)
+            if limit is None or (workers is None and limit[2] is None):
+                raise CompileError('Missing original worker limit')
+            worker_limit = int(limit[1])
+            if workers is None:
+                workers = base_workers = worker_limit - int(limit[2])
+            if worker_limit <= workers or (limit[2] is not None and worker_limit - workers != int(limit[2])):
+                raise CompileError('Unexpected settlement worker increment')
+            offers.append({'id': row[1], 'unlock': unlock, 'cost': int(row[3]), 'currency': row[4].lower(),
+                           'button': text(row[6], localization), 'title': text(row[7], localization),
+                           'description': description, 'radius': effects[radius_key],
+                           'population': effects[population_key], 'workers': worker_limit - workers})
+            workers = worker_limit
+        if len(offers) != 4 or base_workers is None or base_workers < 1:
+            raise CompileError('Incomplete settlement upgrade sequence')
+        result[f'GodPower_PlaceSettlement_{number}'] = {
+            'radius': int(config[radius_key]), 'population': base_population, 'workers': base_workers, 'upgrades': offers}
+    return result, [upgrade_path, modifier_path]
 
 
 def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campaign'):
@@ -554,6 +749,81 @@ def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campa
              'belief_threshold':struct.unpack('<f',image.read(0x104a0c58,4))[0],
              'layers_label':text('LOC_INFO_STATDESC_SculptLay',localization),
              'native_instructions':list(cliff_opcodes),'upgrades':cliff_upgrades}
+    underwater_card = next(row for row in tables['initialworldsetup6/populationlevels.csv'] if row[1]=='Card_UnderWaterSculpt')
+    if not any(row[:2]==['DeepWaterSculpt',underwater_card[1]+'_COMPLETED'] for row in tables['initialworldsetup6/unlocks.csv']):
+        raise CompileError('Missing the original deep-water unlock')
+    water_instructions = {
+        0x100d3c95:'d90524745b10dc0528a24a10',
+        0x100d3e4b:'d90524745b10dc0528a24a10',
+        0x10036154:'d9052cdf5910dd0528a24a10',
+        0x10036ef0:'558becd90504107d10',
+        0x10037255:'d90520107d10',
+    }
+    for address, opcode in water_instructions.items():
+        expected = bytes.fromhex(opcode)
+        if image.read(address,len(expected))!=expected:
+            raise CompileError(f'Unexpected underwater sculpt instruction at {address:#x}')
+    sea_level = int(struct.unpack('<d',image.read(0x104aa228,8))[0])
+    underwater = {'card':underwater_card[1],'population':int(underwater_card[0]),'unlock':'DeepWaterSculpt',
+                  'sea_level':sea_level,'shallow_level':sea_level+int(config['DeepWaterSculptLevel']),
+                  'cost_curve':[[sea_level+int(config[f'BeliefStep{i}']),config[f'BeliefCost{i}']] for i in range(8)],
+                  'belief_threshold':cliff['belief_threshold'],'belief_multiplier':cliff['belief_multiplier'],
+                  'native_instructions':list(water_instructions)}
+    swamp_card = next(row for row in tables['initialworldsetup6/populationlevels.csv'] if row[1]=='Card_Adv_Swamp_1')
+    swamp_power = next(row for row in rows(files,power_table) if row[0]=='GodPower_Swamp')
+    if swamp_power[2]!='SWAMP' or swamp_power[4]!='MIRACLE' or swamp_power[8]!='INSTANT' or not any(
+            row[:2]==[swamp_power[0],swamp_card[1]] for row in tables['initialworldsetup6/unlocks.csv']):
+        raise CompileError('Unexpected original Swamp power or discovery condition')
+    swamp_instructions = {
+        'player_cast':(0x1008b19e,'e8ed0e0b00'),
+        'script_cast':(0x1008f019,'e872d00a00'),
+        'spread_frame_cap':(0x1013bb3d,'d905c0165d10'),
+        'spread_seconds':(0x1013bb68,'d835a0165d10'),
+        'spread_elevation':(0x1013bc67,'dc1d400c4a10'),
+        'spread_limit':(0x1013bd14,'d905bc125d10'),
+        'spread_strength':(0x1013bdf7,'d80dbc165d10'),
+        'spread_increment':(0x1013beb5,'d80db4165d10'),
+        'puddle_size':(0x1013b418,'d905a4165d10'),
+        'cast_sound':(0x1013c383,'6829fb3532'),
+        'follower_drown_threshold':(0x1006d841,'d905bc415a10'),
+    }
+    for name, (address, opcode) in swamp_instructions.items():
+        expected = bytes.fromhex(opcode)
+        if image.read(address,len(expected))!=expected:
+            raise CompileError(f'Unexpected Swamp instruction for {name} at {address:#x}')
+    def swamp_value(name, address):
+        return config.get(name,struct.unpack('<f',image.read(address,4))[0])
+    race_table = 'balance/race.csv'
+    used.append(race_table)
+    race_rows = rows(files,race_table)
+    swamp_column = race_rows[0].index('SwampDamage')
+    swamp_damage = {row[0]:float(row[swamp_column] or '1') for row in race_rows[1:] if row and not row[0].startswith('#')}
+    swamp_races = {'Brown Head':'BrownHead','Red Head':'RedHead','Champion':'Champion','Astari':'AstariRace','NakedRace':'NakedRace'}
+    swamp = {
+        'card':swamp_card[1],'power':swamp_power[0],'population':int(swamp_card[0]),'belief':int(swamp_power[10]),
+        'initial':[[point['x'],point['y']] for point in literal(assignment(local_parser,'SWAMPS'),values).values()],
+        'min_radius':swamp_value('SWAMP_MIN_BLIGHT_RADIUS',0x105d1698),
+        'max_radius':swamp_value('SWAMP_MAX_BLIGHT_RADIUS',0x105d169c),
+        'seconds':swamp_value('SWAMP_SECS_TILL_MAX_RADIUS',0x105d16a0),
+        'max_tiles':int(swamp_value('SWAMP_MAX_TILES',0x105d12bc)),
+        'min_puddle_size':0 if config.get('SwampSizeZeroPuddles',0) else 1,
+        'max_puddle_size':int(swamp_value('SWAMP_MAX_PUDDLE_SIZE',0x105d16a4)),
+        'max_delta':swamp_value('SWAMP_MAX_DELTATIME',0x105d16c0),
+        'expansion':swamp_value('SWAMP_RADIUS_EXTRA_EXPAND_FAC',0x105d16ac),
+        'min_blight':swamp_value('SWAMP_BLIGHT_MIN_THRESH',0x105d16a8),
+        'max_blight':swamp_value('SWAMP_MAX_BLIGHT_VAL',0x105d16bc),
+        'blight_per_second':swamp_value('SWAMP_BLIGHT_VALUE_INCREASE_SPEED',0x105d16b4),
+        'sculpt_clear_chance':swamp_value('SWAMP_PROB_REMOVE_BLIGHT_ON_SCULPT',0x105d16b8),
+        'elevation_tolerance':struct.unpack('<d',image.read(0x104a0c40,8))[0],
+        'bounds_margin':struct.unpack('<d',image.read(0x104aae40,8))[0],
+        'drown_threshold':swamp_value('FollowerSwampProgressToCauseDrown',0x105a41bc),
+        'timeout':config['SWAMP_TIMEOUT'],
+        'damage':{race:swamp_damage['Base']*swamp_damage[source_race] for race,source_race in swamp_races.items()},
+        'clear_hint':text('LOC_EX09M01_T02',localization),
+        'clips':{role:decode_animation(follower[iw_hash('CIwAnim')][iw_hash(name)],bone_count)['duration']
+                 for role,name in FOLLOWER_CLIPS.items() if role.startswith('swamp_')},
+        'native_instructions':{name:address for name,(address,_) in swamp_instructions.items()},
+    }
     fountain_card = next(row for row in tables['initialworldsetup6/populationlevels.csv'] if row[1]=='Card_Adv_Fountain')
     fountain_power = next(row for row in rows(files,power_table) if row[0]=='GodPower_PlaceGiftFountain')
     fountain_type = next(row for row in rows(files,'balance/templetypes.csv') if row[0]==fountain_power[5])
@@ -612,6 +882,16 @@ def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campa
                    'leash_color':[config['LeashColour.'+axis] for axis in 'xyz']+[config['LeashOpacity']]}
     ark,ark_messages = ark_progression(files,local_parser,localization)
     messages.update(ark_messages)
+    capacity, capacity_messages, capacity_tables = capacity_shrine(files, local_parser, values, localization, source)
+    messages.update(capacity_messages)
+    used.extend(capacity_tables)
+    speed, speed_tables = speed_shrine(files, tables, power_table, localization, source)
+    used.extend(speed_tables)
+    settlements, settlement_tables = settlement_upgrades(files, tables['initialworldsetup6/unlocks.csv'], config, localization)
+    used.extend(settlement_tables)
+    meteor, meteor_tables = meteor_rules(source, files, image, config, tables['initialworldsetup6/populationlevels.csv'],
+                                         tables['initialworldsetup6/unlocks.csv'], power_table, localization)
+    used.extend(meteor_tables)
     result = {'version':20, 'scope':'initialworldsetup6', 'map':'Homeworld6',
               'source':archive.relative_to(source).as_posix(), 'source_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
               'files_sha256':{name:hashlib.sha256(files[name]).hexdigest() for name in used},
@@ -620,8 +900,11 @@ def extract(source=ROOT/'data/godus2_4', output=ROOT/'game/assets/original/campa
               'promised_steps':promised_steps,'timeline_steps':timeline_steps,'shrine_steps':shrine_steps,
               'discovery':discovery,'authored_fields':fields,'pit_clips':sacrifice_clips,'pit_beam':beam,'leash_rules':leash_rules,'belief_steps':belief_steps,'belief_rules':belief_rules,'authored_rocks':rocks,
               'object_config':{'taps_to_destroy_rock':int(config['tapsToDestroyRock'])},'rain':rain,'fountain':fountain,'cliff_sculpt':cliff,
+              'underwater_sculpt':underwater,
+              'swamp':swamp,'meteor':meteor,
               'rock_belief':rock_belief,'belief_collector':collector,'builder_settlement':builder_settlement,
-              'mining_settlement':mining_settlement,'ark':ark,
+              'mining_settlement':mining_settlement,'ark':ark,'capacity_shrine':capacity,'speed_shrine':speed,
+              'settlement_upgrades':settlements,
               'route':[{'index':i,'entry':entry} for i,entry in sorted(route.items())],
               'program':{'body':[], 'functions':local_parser.functions,
                          'local_function_names':local_parser.local_function_names,

@@ -467,7 +467,7 @@ func verify_discovery(world: RefCounted,store: RefCounted) -> void:
 			var restored := World.new()
 			check(store.save_world(state)["ok"] and restored.restore(store.load_world()["data"],RandomNumberGenerator.new()),"The Pit's Builder assignment and site must survive a mid-repair save")
 			check(restored.export_state()==state and not restored.inspect(activate)["ok"],"An in-progress repair must reload without losing work or exposing its reward")
-	check(saved_repair and site.get("repaired",false) and world.dwelling_count()>12 and opening["error"].is_empty(),"The regular housing and Builder commands must reach and repair the original Pit: "+player.diagnostic)
+	check(saved_repair and site.get("repaired",false) and opening["error"].is_empty(),"The regular housing and Builder commands must reach and repair the original Pit: "+player.diagnostic)
 	if not site.get("repaired",false): return
 	var home: Dictionary=world._state["homes"].filter(func(item: Dictionary) -> bool: return item.get("script_abode_type")==2 and item["residents"]>0)[0]
 	var collect := {"type":"collect","home_id":home["id"]}

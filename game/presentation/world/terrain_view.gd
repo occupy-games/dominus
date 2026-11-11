@@ -27,6 +27,8 @@ var hazard_revision := -1
 var land_effect_fields: Array = []
 var land_effect_width := 0
 var land_effect_texture: ImageTexture
+var blight_fields: Array = [{},{}]
+var blight_texture: ImageTexture
 
 
 func terrain_material() -> ShaderMaterial:
@@ -87,6 +89,37 @@ func apply_voyage(state: Dictionary) -> void:
 	if hazard_texture==null: hazard_texture=ImageTexture.create_from_image(image)
 	else: hazard_texture.update(image)
 	hazard_material.set_shader_parameter("voyage_hazards",hazard_texture)
+
+
+func apply_blight(state: Dictionary) -> void:
+	if not state.has("opening"): return
+	var fields: Dictionary=state.get("source_influence",{}).get("raster",{}).get("fields",{})
+	var dry: Dictionary=fields.get("2",{})
+	var swamp: Dictionary=fields.get("3",{})
+	if dry==blight_fields[0] and swamp==blight_fields[1]: return
+	blight_fields=[dry,swamp]
+	var field:=swamp.duplicate()
+	for tile: String in dry:
+		if not swamp.has(tile):
+			field[tile]=dry[tile]
+			continue
+		var bytes: PackedByteArray=dry[tile].duplicate()
+		var wet: PackedByteArray=swamp[tile]
+		for i in range(bytes.size()): bytes[i]=maxi(bytes[i],wet[i])
+		field[tile]=bytes
+	var width: int=state["width"]
+	var image:=LandEffectTexture.image_for(width,[field,{},{}])
+	var material:=terrain_material()
+	if image==null:
+		material.set_shader_parameter("blight_enabled",false)
+		return
+	if blight_texture==null or blight_texture.get_width()!=width:
+		blight_texture=ImageTexture.create_from_image(image)
+		material.set_shader_parameter("blight_field",blight_texture)
+		material.set_shader_parameter("blight_width",float(width))
+		material.set_shader_parameter("blight_gradient",load("res://assets/extracted/sprites/GradMap_Swamp.tga"))
+	else: blight_texture.update(image)
+	material.set_shader_parameter("blight_enabled",true)
 
 
 func rebuild(state: Dictionary, force: bool = false) -> void:

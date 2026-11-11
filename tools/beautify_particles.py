@@ -90,10 +90,10 @@ def curve_keys(reader, count):
     return keys
 
 
-def emitter_curves(reader):
+def emitter_curves(reader, frame_mode=1):
     padding, atlas_field, f0, f1, f2, x, y = reader.unpack('<BIBBB2f')
-    if (padding, atlas_field, f0, f1, f2) != (0, 4, 1, 0, 0):
-        raise ValueError("Unexpected fields between the Beautify frame bank and curves")
+    if (padding, atlas_field, f0, f1, f2) != (0, 4, frame_mode, 0, 0):
+        raise ValueError("Unexpected fields between the particle frame bank and curves")
     curves = []
     for ordinal, (field, gap) in enumerate(zip(CURVE_FIELDS, CURVE_GAPS)):
         offset = reader.offset
@@ -115,7 +115,7 @@ def emitter_curves(reader):
     return [x, y], curves
 
 
-def compile_emitter_curves(curves, constants, resolution):
+def compile_emitter_curves(curves, constants, resolution, clamped_fields=()):
     compiled = {}
     for curve in curves:
         field = curve['emitter_field']
@@ -130,9 +130,10 @@ def compile_emitter_curves(curves, constants, resolution):
             conversion[0] = constants['center']
         elif field in (0x7b0, 0x87c, 0xe94, 0xf60):
             conversion[1] = 1.0
-        lanes = {'primary': compile_keys(curve['keys'], constants['cubic_step'])}
+        bounds = (0.0, float(curve['header'][0])) if field in clamped_fields else None
+        lanes = {'primary': compile_keys(curve['keys'], constants['cubic_step'], bounds)}
         if 'secondary_keys' in curve:
-            lanes['secondary'] = compile_keys(curve['secondary_keys'], constants['cubic_step'])
+            lanes['secondary'] = compile_keys(curve['secondary_keys'], constants['cubic_step'], bounds)
         mask = curve.get('secondary_flags', 1)
         enabled = [keys for index, keys in enumerate(lanes.values()) if mask & (1 << index)]
         if not enabled or not curve['header'][1]:
@@ -175,7 +176,7 @@ def birth_shape(reader):
     return dict(radius=radii, linked_direction=bool(link_yaw))
 
 
-def emitter_frames(ptc, start, end, name, atlas, size):
+def emitter_frames(ptc, start, end, name, atlas, size, frame_mode=1):
     header = Reader(ptc, start, end)
     if header.unpack('<i4I') != (-1, 0, 1, 0, 16):
         raise ValueError("Expected a version-16 Beautify child effect")
@@ -221,11 +222,9 @@ def emitter_frames(ptc, start, end, name, atlas, size):
     cache_resolution, = definition.unpack('<I')
     if not math.isfinite(color_time_scale) or color_time_scale <= 0:
         raise ValueError("Invalid particle color time scale")
-    if alternate_color:
-        raise ValueError("Unsupported alternate Beautify color phase")
-    if ((flip_x, flip_y, random_frame, random_rotation) != (1, 1, 1, 1)
+    if ((flip_x, flip_y) not in ((0, 0), (1, 1)) or not (random_frame and random_rotation)
             or frames_per_second or not 0 <= rotation_min < rotation_max <= 360):
-        raise ValueError("Unsupported Beautify birth texture or rotation mode")
+        raise ValueError("Unsupported particle birth texture or rotation mode")
     if not 2 <= cache_resolution <= 1024:
         raise ValueError("Particle curve cache resolution is out of bounds")
     reader = Reader(ptc, frame_offset + 4, end)
@@ -250,14 +249,30 @@ def emitter_frames(ptc, start, end, name, atlas, size):
                 or [right - left + 1, bottom - top + 1] != [w, h]):
             raise ValueError("Particle UVs do not match the authored texel extent")
         frame.update(atlas_rect=[left, top, w, h], uv=[u0, v0, u1, v1])
-    frame_parameters, curves = emitter_curves(reader)
+    frame_parameters, curves = emitter_curves(reader, frame_mode)
     birth = dict(elevation=elevation, **birth_shape(reader), frame_count=count,
-                 rotation_degrees=[rotation_min, rotation_max])
+                 rotation_degrees=[rotation_min, rotation_max],
+                 texture_variants=bool(flip_x), random_color_phase=bool(alternate_color))
     return dict(name=name, offset=start, end=end, frame_bank_offset=frame_offset,
                 definition_offset=definition_offset, definition_name=definition_name,
                 definition_end=reader.offset, frame_parameters=frame_parameters,
                 curve_cache_resolution=cache_resolution, color_time_scale=color_time_scale, clock=clock,
                 sha256=hashlib.sha256(ptc[start:end]).hexdigest(), frames=frames, curves=curves, birth=birth)
+
+
+def playback_constants(image):
+    constants = {name: struct.unpack('<d', image.read(address, 8))[0]
+                 for name, address in [('cubic_step', 0x104f3990), ('percent', 0x104a3328),
+                                       ('center', 0x104f2e10), ('opacity_byte_scale', 0x104f31d8)]}
+    constants['neutral'] = [struct.unpack('<d', image.read(address, 8))[0] for address in (0x104f3988, 0x104f3980)]
+    # Immediate operands and divisor of the random rate interpolation at 0x102868f0.
+    multiply, increment = image.read(0x102868fd, 6), image.read(0x10286911, 5)
+    if multiply[:2] != b'\x69\xc0' or increment[:1] != b'\x05':
+        raise ValueError("Unexpected Beautify particle RNG")
+    emission_rng = dict(multiplier=int.from_bytes(multiply[2:], 'little'),
+                        increment=int.from_bytes(increment[1:], 'little'),
+                        divisor=struct.unpack('<d', image.read(0x104f27f0, 8))[0])
+    return constants, emission_rng
 
 
 def extract(source):
@@ -293,22 +308,14 @@ def extract(source):
     if atlas[:16] != b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR':
         raise ValueError("Expected PNG particle atlas")
     size = struct.unpack_from('>II', atlas, 16)
-    constants = {name: struct.unpack('<d', image.read(address, 8))[0]
-                 for name, address in [('cubic_step', 0x104f3990), ('percent', 0x104a3328),
-                                       ('center', 0x104f2e10), ('opacity_byte_scale', 0x104f31d8)]}
-    constants['neutral'] = [struct.unpack('<d', image.read(address, 8))[0] for address in (0x104f3988, 0x104f3980)]
-    # Immediate operands and divisor of the random rate interpolation at 0x102868f0.
-    multiply, increment = image.read(0x102868fd, 6), image.read(0x10286911, 5)
-    if multiply[:2] != b'\x69\xc0' or increment[:1] != b'\x05':
-        raise ValueError("Unexpected Beautify particle RNG")
-    emission_rng = dict(multiplier=int.from_bytes(multiply[2:], 'little'),
-                        increment=int.from_bytes(increment[1:], 'little'),
-                        divisor=struct.unpack('<d', image.read(0x104f27f0, 8))[0])
+    constants, emission_rng = playback_constants(image)
     emitters = []
     for child in scene['children']:
         offset = child['offset']
         end = offsets[offsets.index(offset) + 1]
         emitter = emitter_frames(ptc, offset, end, child['name'], atlas_name, size)
+        if not emitter['birth']['texture_variants'] or emitter['birth']['random_color_phase']:
+            raise ValueError("Unexpected Beautify texture or color selection")
         emitter['scalar_curves'] = compile_emitter_curves(emitter['curves'], constants, emitter['curve_cache_resolution'])
         rate, = [curve for curve in emitter['curves'] if curve['emitter_field'] == 0x2b8]
         if any(len(rate[key]) != 1 for key in ('keys', 'secondary_keys')) or rate['secondary_flags'] not in (1, 3):

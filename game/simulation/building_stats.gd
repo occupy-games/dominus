@@ -3,6 +3,7 @@ extends RefCounted
 
 const Economy = preload("res://simulation/campaign_economy.gd")
 const AbodeBeauty = preload("res://simulation/campaign_abode_beauty.gd")
+const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
 
 
 static func belief_enabled(state: Dictionary) -> bool:
@@ -33,7 +34,7 @@ static func belief_interval(state: Dictionary) -> int:
 
 
 static func belief_per_cycle(state: Dictionary,home: Dictionary) -> float:
-	var modifier := AbodeBeauty.belief_modifier(state,home)
+	var modifier := float(home.get("belief_modifier",0))
 	var multiplier := float(home.get("belief_multiplier",1))
 	if state.has("opening") and not home.has("belief_modifier"):
 		var story: Dictionary=state["opening"]["definition"]
@@ -42,6 +43,7 @@ static func belief_per_cycle(state: Dictionary,home: Dictionary) -> float:
 		var values: Dictionary=source.get("values",{})
 		modifier=float(values.get("belief modifier",modifier))
 		multiplier=float(values.get("belief multiplier per peep in house",multiplier))
+	modifier=AbodeBeauty.belief_modifier(state,home,modifier)
 	return (1.0+modifier)*pow(multiplier,maxi(0,int(home["residents"])))
 
 
@@ -57,8 +59,8 @@ static func advance_belief(state: Dictionary,default_build_ticks: int) -> void:
 		home["stored"]=mini(capacity,int(home["stored"])+earned)
 
 
-static func inspect(state: Dictionary,id: Variant,entity: String="home") -> Dictionary:
-	var homes: Array=state.get("homes",[])
+static func inspect(state: Dictionary,id: Variant,entity: String="home",capacity_effect: Dictionary={}) -> Dictionary:
+	var homes: Array=state.get("homes",[])+state.get("astari_village",{}).get("homes",[])
 	if entity=="temple":
 		for site: Dictionary in state.get("progression",{}).get("shrines",[]):
 			if site["id"]!=str(id): continue
@@ -99,10 +101,11 @@ static func inspect(state: Dictionary,id: Variant,entity: String="home") -> Dict
 	for home: Dictionary in homes:
 		if int(home["id"])!=id: continue
 		var duration := int(home.get("build_ticks",state.get("build_ticks",60)))
+		var capacity:=Capacity.capacity(home,capacity_effect)
 		var result := {"entity":entity,"id":id,"kind":home.get("kind",""),"family":int(home.get("family",0)),"rank":int(home.get("rank",1)),"name":home.get("name",""),
-			"complete":home["progress"]>=duration,"progress":float(home["progress"])/maxi(1,duration),"stalled":bool(home.get("stalled",false)),"occupants":int(home["residents"]),"capacity":int(home.get("capacity",2)),
+			"complete":home["progress"]>=duration,"progress":float(home["progress"])/maxi(1,duration),"stalled":bool(home.get("stalled",false)),"occupants":int(home["residents"]),"capacity":capacity,
 			"belief":int(home["stored"]),"belief_capacity":int(home.get("max_belief",30)),"builders":0,"builders_working":0,"build_capacity":maxi(1,floori(float(home.get("build_capacity",1)))),"workers":0,"workers_working":0,
-			"next_follower_seconds":-1.0,"full":int(home["residents"])>=int(home.get("capacity",2)),"belief_per_hour":0.0}
+			"next_follower_seconds":-1.0,"full":int(home["residents"])>=capacity,"belief_per_hour":0.0}
 		if home.has("source_house"): result["source_house"]=home["source_house"]
 		var reserved_residents := 0
 		for follower: Dictionary in state["followers"]:
@@ -132,7 +135,7 @@ static func inspect(state: Dictionary,id: Variant,entity: String="home") -> Dict
 				var interval := birth_interval(state,home)
 				if not state.has("opening"):
 					result["next_follower_seconds"]=(interval-int(state["tick"])%interval)*0.1
-				elif home["residents"]>0 and home["residents"]+reserved_residents<home["capacity"] and not home.get("breed_locked",false):
+				elif home["residents"]>0 and home["residents"]+reserved_residents<capacity and not home.get("breed_locked",false):
 					result["next_follower_seconds"]=maxi(0,authored_birth_interval(state,home)-int(home.get("breed_ticks",0)))*0.1
 			if result["complete"] and belief_enabled(state) and result["occupants"]>0: result["belief_per_hour"]=belief_per_cycle(state,home)*36000.0/belief_interval(state)
 		return result

@@ -33,7 +33,7 @@ func run() -> void:
 	check(twin.rig!=human.rig,"Shared source meshes must retain independently animated skeletons")
 	twin.free()
 	human.set_process(false)
-	for clip: String in ["idle", "walking", "building"]:
+	for clip: String in ["idle", "walking", "building", "swamp_struggle"]:
 		human.animation_state = clip
 		human.apply_animation(0)
 		var poses := []
@@ -54,6 +54,8 @@ func run() -> void:
 	check(app.screen.audio.sculpt.playing, "Dragging must play the original SculptLoop event")
 	app.screen.audio.set_sculpting(false, true)
 	check(not app.screen.audio.sculpt.playing and "STOPSOUND_SCULPTLOOP" in app.screen.audio.played_events, "Release must stop the loop and play its original release tail")
+	app.screen.audio.play_event("Swamp cast")
+	check("Swamp cast" in app.screen.audio.played_events, "The recovered Swamp cast event must load its original bank media")
 	human.animation_state = "building"
 	human.playback_speed = 1.0
 	human.last_clip = ""

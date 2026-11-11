@@ -1,5 +1,5 @@
 extends RefCounted
-## Source starting values and passive decay; festival/tribal AI are separate work.
+## Source starting values and passive player decay.
 
 
 static func initial(rules: Dictionary) -> Dictionary:
@@ -17,5 +17,5 @@ static func valid(values: Variant) -> bool:
 	if not values is Dictionary: return false
 	for tribe: String in ["player","astari"]:
 		var value: Variant = values.get(tribe)
-		if not (value is float or value is int) or not is_finite(float(value)) or value<0 or value>1: return false
+		if not (value is float or value is int) or not is_finite(float(value)) or value<(-1 if tribe=="astari" else 0) or value>1: return false
 	return true

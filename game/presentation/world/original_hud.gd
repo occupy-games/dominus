@@ -80,7 +80,7 @@ func _ready() -> void:
 	card_row.position = Vector2(88,12)
 	card_row.add_theme_constant_override("separation",5)
 	add_child(card_row)
-	for id: String in ["Card_MaxRank_2","Card_RepairTemple","Card_Spirituality","Card_GodPower_TotemActivate","Card_DoubleClick","Card_AbodeType_2","Card_RockBelief_1","Card_Adv_BeliefCollection","Card_Settlement_Farming","Card_GrainToBuild","Card_Adv_RainOfPurity_1","Card_AbodeType1_Rank2","Card_CliffSculptingLevel1","Card_Adv_Fountain","Card_AbodeType2_Rank3","Card_Settlement_Follower","Card_AbodeType2_Rank4","Card_Settlement_Mine","Card_RepairTemple_2","Card_WheatBuff_1","Card_AbodeType3_Rank5","Card_AbodeType3_Rank6"]:
+	for id: String in ["Card_MaxRank_2","Card_RepairTemple","Card_Spirituality","Card_GodPower_TotemActivate","Card_DoubleClick","Card_AbodeType_2","Card_RockBelief_1","Card_Adv_BeliefCollection","Card_Settlement_Farming","Card_GrainToBuild","Card_Adv_RainOfPurity_1","Card_Stickers_Bronze","Card_AbodeType1_Rank2","Card_CliffSculptingLevel1","Card_Adv_Fountain","Card_AbodeType2_Rank3","Card_Settlement_Follower","Card_AbodeType2_Rank4","Card_Adv_FingerOfGod_1","Card_Capacity_1","Card_Adv_Swamp_1","Card_UnderWaterSculpt","Card_Adv_MeteorStrike_1","Card_Stickers_Iron","Card_Settlement_Mine","Card_RepairTemple_2","Card_WheatBuff_1","Card_AbodeType3_Rank5","Card_AbodeType3_Rank6","Card_Speed_1"]:
 		if not cards.has(id): continue
 		var node := Card.new()
 		node.source = cards[id]
@@ -185,6 +185,7 @@ func apply_snapshot(data: Dictionary) -> void:
 	for power: String in power_nodes:
 		power_nodes[power].visible=data.has("progression") and power in data["progression"]["powers"]
 		var active: bool = power=="GodPower_TotemActivate" and data.has("progression") and data["progression"]["totem"].get("active",false)
+		if power=="GodPower_FingerOfGod": active=data.get("opening",{}).get("finger_status",{}).get("active",false)
 		power_nodes[power].texture_normal=powers[power]["alternate"] if active else powers[power]["texture"]
 		power_nodes[power].tooltip_text=powers[power]["alt_title"] if active else powers[power]["title"]
 

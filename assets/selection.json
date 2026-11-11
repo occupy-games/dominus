@@ -6,6 +6,9 @@
     {"path": "sprites/pack_treeImposters_v2.png", "role": "vegetation atlas", "dependencies": ["sprites/pack_treeImposters_v2.png.dat (unresolved atlas metadata)"]},
     {"path": "sprites/Belief_bar.png", "role": "belief UI"},
     {"path": "sprites/plotTexture.png", "role": "building plot texture"},
+    {"path": "VFX/Textures/Misc.png", "role": "buried treasure particle atlas"},
+    {"path": "VFX/Textures/GOD_MeteorStreak.tga", "role": "Meteor Strike projectile streak"},
+    {"path": "VFX/Textures/LNS_SimpleBlurPinch.tga", "role": "Meteor Strike impact flare"},
     {"path": "SoundBanks/Mac/Audio_commentary/02_Sculpting_card.mp3", "role": "audio import sample: sculpting commentary"}
   ]
 }

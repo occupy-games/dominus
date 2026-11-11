@@ -9,6 +9,14 @@ const ROCK_ID_BASE := 4294967296
 const PLOT_HANDLE := 0x05000000
 const MESSAGE_GROUPS := {"Trail":0,"PromisedLand":1000,"Timeline":2000,"ShrineOfExpansion":3000,"Belief":4000,"Discovery":5000,"PitOfDoom":5100,"Leash":5200,"Events":5300,"Farming":5400,"SuperFast":5500}
 const Farming = preload("res://simulation/campaign_farming.gd")
+const GodSeed = preload("res://simulation/campaign_god_seed.gd")
+const Finger = preload("res://simulation/campaign_finger.gd")
+const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
+const SpeedShrine = preload("res://simulation/campaign_speed_shrine.gd")
+const SettlementUpgrades = preload("res://simulation/campaign_settlement_upgrades.gd")
+const WaterSculpt = preload("res://simulation/source_underwater_sculpt.gd")
+const Swamp = preload("res://simulation/campaign_swamp.gd")
+const Meteor = preload("res://simulation/campaign_meteor.gd")
 var world: RefCounted
 var state: Dictionary
 var events: Array
@@ -265,6 +273,18 @@ func advance_discovery() -> void:
 	advance_fountain()
 	advance_cliff_sculpt()
 	advance_belief_advances()
+	advance_god_seed()
+	advance_finger()
+	advance_capacity_shrine()
+	Swamp.discover(state,events)
+	Meteor.discover(state,events)
+	var water_sculpt:=WaterSculpt.rules_for(state)
+	var progression: Dictionary=state["progression"]
+	if not water_sculpt.is_empty() and state["followers"].size()>=int(water_sculpt["population"]) and not WaterSculpt.CARD in progression["discovered"]:
+		preload("res://simulation/progression.gd").discover(progression,WaterSculpt.CARD)
+		if WaterSculpt.CARD in progression["discovered"]:
+			events.append({"type":"card_discovered","card":WaterSculpt.CARD})
+			events.append({"type":"campaign_autosave"})
 	preload("res://simulation/campaign_ark.gd").advance(world,state,self,events)
 	if opening["discovery_step"]==0 and not opening["globals"].get("bWaitingForTempleInAoI",false) and int(state["tick"])%10==0:
 		discovery_hook("onAbodeSproggable")
@@ -354,10 +374,12 @@ func set_farming_step(step: int) -> void:
 
 func advance_farming() -> void:
 	var p: Dictionary=state["progression"]
-	for housing: Dictionary in opening["definition"].get("housing_advances",[]):
-		if state["followers"].size()>=int(housing["population"]):
-			preload("res://simulation/progression.gd").discover(p,housing["id"])
+	for key: String in ["housing_advances","sticker_advances","environment_advances"]:
+		for level: Dictionary in opening["definition"].get(key,[]):
+			if state["followers"].size()>=int(level["population"]):
+				preload("res://simulation/progression.gd").discover(p,level["id"])
 	var fields:=Farming.field_count(state)
+	SpeedShrine.discover(state,fields,events)
 	for advance: Dictionary in opening["definition"].get("grain_advances",[]):
 		if fields>=int(advance["fields"]):
 			preload("res://simulation/progression.gd").discover(p,advance["id"])
@@ -490,6 +512,106 @@ func advance_fountain() -> void:
 		clear_message(5606)
 
 
+func advance_god_seed() -> void:
+	var rules := GodSeed.rules_for(state)
+	if rules.is_empty(): return
+	var p: Dictionary=state["progression"]
+	if state["followers"].size()>=int(rules["population"]):
+		preload("res://simulation/progression.gd").discover(p,GodSeed.CARD)
+	if not GodSeed.POWER in p["powers"] and preload("res://simulation/source_unlocks.gd").enabled(p,GodSeed.POWER):
+		p["powers"].append(GodSeed.POWER)
+		p["revision"]+=1
+
+
+func show_god_seed_card() -> void:
+	preload("res://simulation/progression.gd").complete(state,GodSeed.CARD)
+	opening["god_seed_step"]=1
+	show_message(5701)
+	events.append({"type":"campaign_show_card","card":GodSeed.CARD})
+	events.append({"type":"campaign_autosave"})
+
+
+func god_seed_tool(selected: bool) -> void:
+	if opening.get("god_seed_step",0)!=2: return
+	if selected:
+		show_message(5702)
+	else:
+		clear_message(5702)
+		opening["god_seed_step"]=3
+
+
+func advance_finger() -> void:
+	var rules := Finger.rules_for(state)
+	if rules.is_empty() or state["followers"].size()<int(rules["population"]): return
+	var progression: Dictionary=state["progression"]
+	if Finger.CARD in progression["discovered"]: return
+	preload("res://simulation/progression.gd").discover(progression,Finger.CARD)
+	if not Finger.CARD in progression["discovered"]: return
+	if preload("res://simulation/source_unlocks.gd").enabled(progression,Finger.POWER) and not Finger.POWER in progression["powers"]:
+		progression["powers"].append(Finger.POWER)
+	events.append({"type":"card_discovered","card":Finger.CARD})
+	events.append({"type":"campaign_autosave"})
+
+
+func advance_capacity_shrine() -> void:
+	var rules:=Capacity.rules_for(state)
+	if rules.is_empty(): return
+	var p: Dictionary=state["progression"]
+	if state["followers"].size()>=int(rules["population"]) and not Capacity.CARD in p["discovered"]:
+		preload("res://simulation/progression.gd").discover(p,Capacity.CARD)
+		if Capacity.CARD in p["discovered"]:
+			opening["capacity_step"]=1
+			show_message(6001)
+			events.append({"type":"card_discovered","card":Capacity.CARD})
+			events.append({"type":"campaign_autosave"})
+	if not Capacity.POWER in p["powers"] and preload("res://simulation/source_unlocks.gd").enabled(p,Capacity.POWER):
+		p["powers"].append(Capacity.POWER)
+		p["revision"]+=1
+	if opening.erase("resume_capacity_card"): close_capacity_card()
+
+
+func close_capacity_card() -> void:
+	if opening.get("capacity_step")==1:
+		clear_message(6001)
+		opening["capacity_step"]=2
+	if opening.get("capacity_step")==2 and Capacity.CARD in state["progression"]["completed"]:
+		opening["capacity_step"]=3
+		show_message(6002)
+
+
+func capacity_shrine_placed(shrine: Dictionary) -> void:
+	if opening.get("capacity_step",0)>=4: return
+	clear_message(6001)
+	clear_message(6002)
+	opening["capacity_step"]=4
+	show_message(6003)
+	for message: Dictionary in opening["messages"]:
+		if message["id"]==6003:
+			message["anchor"]={"kind":"plot","x":shrine["x"],"z":shrine["z"]}
+			break
+	events.append({"type":"campaign_autosave"})
+
+
+func finger_menu(show: bool) -> void:
+	if opening["persistent"].get("BeliefFingerProgress",0)>=3 or not Finger.CARD in state["progression"]["completed"]: return
+	if show and Finger.status(state).get("affordable",false):
+		opening["persistent"]["BeliefFingerProgress"]=2
+		show_message(5901)
+	else: clear_message(5901)
+
+
+func finger_armed() -> void:
+	clear_message(5901)
+	if opening["persistent"].get("BeliefFingerProgress",0)<3 and Finger.CARD in state["progression"]["completed"]:
+		show_message(5902)
+
+
+func finger_finished() -> void:
+	if opening["messages"].any(func(message: Dictionary) -> bool: return message["id"]==5902):
+		clear_message(5902)
+		opening["persistent"]["BeliefFingerProgress"]=1337
+
+
 func show_fountain_card(id: String) -> void:
 	preload("res://simulation/progression.gd").complete(state,id)
 	var power: String=opening["definition"]["fountain"]["power"]
@@ -615,6 +737,7 @@ static func release_candidate(state: Dictionary,id: int) -> Dictionary:
 	var breeders: int=int(state["opening"]["definition"]["first_abode_values"]["values"]["breeder count"])
 	for home: Dictionary in state["homes"]:
 		if int(home["id"])!=id or home.get("kind","")=="shrine" or home["progress"]<home["build_ticks"] or home["residents"]<=home.get("breeder_count",breeders): continue
+		if home.get("settlement_core",false) and not SettlementUpgrades.can_release(state,home): return {}
 		for follower: Dictionary in state["followers"]:
 			if follower["state"]=="indoors" and follower.get("indoors_home",state["homes"][0]["id"])==id: return {"home":home,"follower":follower}
 	return {}
@@ -868,6 +991,12 @@ func tap_rock(cell: int) -> void:
 	var p: Dictionary = state["progression"]
 	p["rock_taps"][str(cell)]=int(p["rock_taps"].get(str(cell),0))+1
 	if int(p["rock_taps"][str(cell)])<int(opening["definition"]["object_config"]["taps_to_destroy_rock"]): return
+	remove_rock(cell,true)
+
+
+func remove_rock(cell: int,grant_belief: bool) -> void:
+	var p: Dictionary=state["progression"]
+	p["rock_taps"][str(cell)]=int(opening["definition"]["object_config"]["taps_to_destroy_rock"])
 	var rock := SourceRocks.at(state,cell)
 	var reward:=0
 	if not rock.is_empty():
@@ -876,7 +1005,7 @@ func tap_rock(cell: int) -> void:
 				p["rock_taps"][str((int(rock["origin_z"])+dz)*int(state["width"])+int(rock["origin_x"])+dx)]=int(p["rock_taps"][str(cell)])
 		var rules: Dictionary=opening["definition"].get("rock_belief",{})
 		var unlocks:=preload("res://simulation/source_unlocks.gd")
-		if not rules.is_empty() and unlocks.enabled(p,"TreeRockBelief"):
+		if grant_belief and not rules.is_empty() and unlocks.enabled(p,"TreeRockBelief"):
 			var type:=str(int(rock["type"]))
 			var base:=int(rules["amounts"].get(type,0))
 			if base==0: base=rules["default_amount"]
@@ -1015,7 +1144,7 @@ func advance() -> void:
 		var cell := int(agent["path"][0])
 		var destination := Vector2(cell%int(state["width"]),cell/int(state["width"]))
 		var speed: float = float(world.follower_values(agent).get("RouteSpeed",opening["definition"]["constants"]["base_follower_speed"]))*float(opening["reaction_speed"])
-		var next := position.move_toward(destination,speed*0.1)
+		var next := position.move_toward(destination,float(world.source_route_speed(speed,position))*0.1)
 		agent["x"]=next.x
 		agent["z"]=next.y
 		agent["state"]="walking"
@@ -1277,7 +1406,7 @@ func api(name: String,args: Array) -> Variant:
 				if home["id"]!=args[0]: continue
 				match name:
 					"AbodeState": return int(home["progress"]>=home["build_ticks"])
-					"AbodeIsFull": return home["residents"]>=home["capacity"]
+					"AbodeIsFull": return home["residents"]>=Capacity.capacity(home,Capacity.effects(state,world.source_raw_height_at))
 					"AbodeBreedTime": return float(home["birth_ticks"]-home.get("breed_ticks",0))*0.1
 					"AbodeLockBreed": home["breed_locked"]=bool(args[1]); return null
 			return false
@@ -1524,7 +1653,22 @@ static func valid(data: Variant) -> bool:
 	if data.has("rain_cast") and (not definition.has("rain") or not rain.valid_point(data["rain_cast"],1024)): return false
 	if definition.has("fountain") and not preload("res://simulation/campaign_fountain.gd").valid_rules(definition["fountain"]): return false
 	if definition.has("cliff_sculpt") and not preload("res://simulation/campaign_cliff_sculpt.gd").valid_rules(definition["cliff_sculpt"]): return false
+	if definition.has(WaterSculpt.KEY) and not WaterSculpt.valid_rules(definition[WaterSculpt.KEY]): return false
+	if definition.has(Swamp.KEY) and not Swamp.Source.valid_rules(definition[Swamp.KEY]): return false
+	if data.has(Swamp.KEY) and (not definition.has(Swamp.KEY) or not Swamp.valid(data[Swamp.KEY],definition[Swamp.KEY])): return false
+	if not Meteor.valid(data): return false
+	if not integer(data.get("bathymetry_revision",0),0,2147483647): return false
 	if definition.has("belief_collector") and not preload("res://simulation/campaign_belief_collector.gd").valid_rules(definition["belief_collector"]): return false
+	if definition.has("god_seed") and not GodSeed.valid_rules(definition["god_seed"]): return false
+	if definition.has("finger_of_god") and not Finger.valid_rules(definition["finger_of_god"]): return false
+	if definition.has(Capacity.KIND) and (not Capacity.valid_rules(definition[Capacity.KIND]) or not preload("res://simulation/source_temple_membership.gd").valid_rules(definition.get("temple_membership_rules"))): return false
+	if definition.has(SpeedShrine.KIND) and (not SpeedShrine.valid_rules(definition[SpeedShrine.KIND]) or not preload("res://simulation/source_temple_membership.gd").valid_rules(definition.get("temple_membership_rules"))): return false
+	if definition.has(SettlementUpgrades.KEY) and not SettlementUpgrades.valid_rules(definition[SettlementUpgrades.KEY]): return false
+	if data.has("capacity_step") and (not definition.has(Capacity.KIND) or not integer(data["capacity_step"],1,4)): return false
+	if not data.get("resume_capacity_card",false) is bool: return false
+	if definition.has("astari_raids") and not preload("res://simulation/campaign_astari_raids.gd").valid_rules(definition["astari_raids"]): return false
+	if definition.has("astari_village") and not preload("res://simulation/campaign_astari.gd").valid_rules(definition["astari_village"]): return false
+	if data.has("god_seed_step") and (not definition.has("god_seed") or not integer(data["god_seed_step"],1,3)): return false
 	if definition.has("rock_belief"):
 		var rocks: Variant=definition["rock_belief"]
 		if not rocks is Dictionary or rocks.get("card")!="Card_RockBelief_1" or rocks.get("unlock")!="RockBelief_1": return false
@@ -1541,6 +1685,11 @@ static func valid(data: Variant) -> bool:
 	if definition.has("house_selection") and not preload("res://simulation/source_houses.gd").valid(definition["house_selection"]): return false
 	if definition.has("house_base_stats") and not preload("res://simulation/source_house_base_stats.gd").valid(definition["house_base_stats"]): return false
 	if definition.has("house_environment") and not preload("res://simulation/source_house_environment.gd").valid(definition["house_environment"]): return false
+	if definition.has("environment_advances"):
+		var advances: Variant=definition["environment_advances"]
+		if not advances is Array or advances.size()>2 or not definition.has("house_environment"): return false
+		for level: Variant in advances:
+			if not level is Dictionary or not level.get("id") in ["Card_TreeBuff_1","Card_TreeBuff_2"] or not integer(level.get("population"),1,100000): return false
 	if definition.has("house_surroundings_rules") and not preload("res://simulation/source_house_surroundings.gd").valid_rules(definition["house_surroundings_rules"]): return false
 	if definition.has("temple_effects") and not preload("res://simulation/source_temple_effects.gd").valid_content(definition["temple_effects"]): return false
 	if definition.has("build_candidate_values"):
@@ -1683,6 +1832,7 @@ static func sculpt_cost(state: Dictionary,edits: Array,fallback: int) -> int:
 	for edit: Dictionary in edits:
 		var cell: int = edit["cell"]
 		var previous := int(state["terrain"][cell])+19 if int(state["terrain"][cell])>0 else int(opening["submerged_levels"].get(str(cell),floor[cell]))
+		var after:=int(edit.get("raw_height",int(edit["height"])+19))
 		# Global onSculptFailed identifies the free 17..24 coastal band.
-		if mini(previous,int(edit["height"])+19)<int(band["min"]) or maxi(previous,int(edit["height"])+19)>int(band["max"]): return fallback
+		if mini(previous,after)<int(band["min"]) or maxi(previous,after)>int(band["max"]): return fallback
 	return 0

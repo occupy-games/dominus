@@ -2,6 +2,9 @@ extends SceneTree
 
 const World = preload("res://simulation/world.gd")
 const Research = preload("res://simulation/research.gd")
+const Content = preload("res://infrastructure/campaign_content.gd")
+const Supply = preload("res://simulation/campaign_chests.gd")
+const Progression = preload("res://simulation/progression.gd")
 var failures := 0
 
 
@@ -10,7 +13,7 @@ func check(ok: bool,message: String) -> void:
 
 
 func _initialize() -> void:
-	var definition := preload("res://infrastructure/campaign_content.gd").homeworld()
+	var definition := Content.homeworld()
 	definition["width"]=64
 	definition["terrain"]=PackedByteArray(); definition["terrain"].resize(4096); definition["terrain"].fill(1)
 	definition["tree_field"]=PackedByteArray(); definition["tree_field"].resize(4096)
@@ -73,5 +76,35 @@ func _initialize() -> void:
 	for i in range(50):
 		world.step(); restored.step()
 	check(world.export_state()==restored.export_state(),"Supply and house production must continue deterministically after restoration")
+	check_small_start_supply()
 	print("Typed resource matching, replenishing chests and occupied house belief: %d failures"%failures)
 	quit(1 if failures else 0)
+
+
+func check_small_start_supply() -> void:
+	for id: String in ["homeworld2","homeworld3","homeworld4","homeworld5"]:
+		var world := World.new()
+		var random := RandomNumberGenerator.new()
+		random.seed=2026
+		world.initialize({"campaign_data":Content.map_definition(id)},random)
+		var state: Dictionary=world._state
+		var p: Dictionary=state["progression"]
+		# Stage the first earned card without changing the map or adding stock.
+		var card := "Card_MaxRank_2"
+		Progression.discover(p,card)
+		var opened := 0
+		for interval in range(20):
+			state["tick"]=int(p.get("supply_next_tick",0))
+			Supply.advance(world,state,random,[])
+			var live: Array=p["chests"].filter(func(chest: Dictionary) -> bool: return chest.get("generated",false) and not chest["opened"])
+			check(live.size()<=1,id+" must keep the shared starter chest budget")
+			for chest: Dictionary in live:
+				var open := {"type":"open_chest","id":chest["id"]}
+				check(world.inspect(open)["ok"],id+" must place a reachable starter chest")
+				for event: Dictionary in world.step([open]):
+					if event["type"]!="chest_opened": continue
+					opened+=1
+					var drop := {"type":"research_card","card":card,"sticker":event["card"]}
+					if world.inspect(drop)["ok"]: world.step([drop])
+			if opened>=2 and card in p["completed"]: break
+		check(opened>=2 and card in p["completed"],id+" must refill and supply a sticker for the first earned card")

@@ -49,7 +49,9 @@ the indicated follower, drag to the plot and release. Then hold on the house
 and drag an occupant to the same building site. In the group lesson, hold
 over each of the four followers in turn and release over the shrine. The
 completion message returns you to Homeworld. Hold on a free follower or a
-house with a releasable Builder and drag to the Dock. The Dock becomes
+house with a releasable Builder and drag to an empty plot to build there, or
+onto an unfinished abode to fill an open Builder slot. Use the same gesture
+to send Builders to the Dock. The Dock becomes
 actionable once the Pit's influence area has expanded. Claim the Voyages card
 after repairs, then select the Dock and press GO to sail to the first island.
 You can also leash followers into the repaired Pit of Doom. The Pit awards
@@ -67,10 +69,11 @@ homes, then press Preview and Squish it! Click the settlement to release a
 Farmer, or leash a Farmer to a valid plot within its radius. Click the field's
 marker when the wheat is ready. Start two fields to reveal Super Fast Building.
 Claim the card and follow its prompts to collect wheat from the fields near the
-settlement and the original terraced fields. Builders need wheat for ordinary
-abodes outside settlements once the card is active, and the source build-time
-modifier applies to new construction. The later Happiness and Gifts tutorial
-remains unfinished.
+settlement and the original terraced fields. Once the lesson ends, place a
+Farming Settlement near those terraces and release Farmers to work reachable
+fields again. Builders need wheat for ordinary abodes outside settlements once
+the card is active, and the source build-time modifier applies to new
+construction.
 The main menu's Continue action selects the more recently modified standard or
 Homeworld6 opening save after restarting the application.
 
@@ -637,6 +640,10 @@ environment pass at `0x100b7744`. The `Environment Buffs` registration names
 nearby ground covered by beautification. The original calculation raises
 count-based multipliers to the object count and interpolates beautification
 multipliers from 1. Caps below 1 are floors. Caps at or above 1 are ceilings.
+Homeworld6 awards its tree advances at 290 and 5,000 followers. Completing
+their typed research applies the two source tree multipliers in table order.
+The campaign samples live trees around an abode's source anchor and refreshes
+the count after tree or terrain changes.
 There are 192 native contribution comparisons and 102 composed stat queries,
 including shrine-before-environment ordering, monastery/farm/mine eligibility
 and real unlock set membership. The house-only branches of the original

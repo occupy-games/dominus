@@ -20,6 +20,11 @@ var resolve_worker: Callable
 var worker_assets: Dictionary = {}
 var sheep_assets: Dictionary = {}
 var enemy_assets: Dictionary = {}
+var resolve_archer: Callable
+var resolve_astari_civilian: Callable
+var astari_civilian_assets: Dictionary={}
+var resolve_arrow_reaction: Callable
+var arrow_reaction_assets: Dictionary = {}
 var scenery_assets: Dictionary = {}
 var resolve_model: Callable
 var prop_nodes: Dictionary = {}
@@ -28,6 +33,9 @@ var farming_preview: Node3D
 var pit_beam: MeshInstance3D
 var pit_beam_curve: Array=[]
 var pit_beam_time := 0.0
+var finger_view := preload("res://presentation/world/finger_view.gd").new()
+var meteor_view := preload("res://presentation/world/meteor_view.gd").new()
+var finger_preview := false
 var animation_speed := 1.0
 var terrain := Terrain.new()
 var camera := Camera3D.new()
@@ -61,6 +69,11 @@ var pointer_screen := Vector2.ZERO
 var terrain_region := Rect2i()
 var ocean := MeshInstance3D.new()
 var bathymetry := PackedByteArray()
+var depth_pixels := PackedByteArray()
+var depth_texture: ImageTexture
+var depth_revision := -1
+var depth_preview := false
+var terrain_preview := false
 var effects_enabled := true
 var effects_db := -15.0
 var preferences: Dictionary = {}
@@ -73,6 +86,7 @@ var lighting_revision := -1
 var resolve_building: Callable
 var resolve_unit: Callable
 var progression_nodes: Dictionary = {}
+var chest_glints := preload("res://presentation/world/chest_glints.gd").new()
 var unit_assets: Dictionary = {}
 var rock_index: Dictionary = {}
 var rock_templates: Dictionary = {}
@@ -102,12 +116,15 @@ func _ready() -> void:
 	terrain.detail_texture = detail_texture
 	add_child(trees)
 	add_child(rocks)
+	add_child(chest_glints)
+	add_child(finger_view)
+	finger_view.hide()
+	add_child(meteor_view)
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(200, 200)
 	ocean.mesh = plane
 	ocean.position.y = 0.06
-	var water := Ground.material(true)
-	ocean.material_override = water
+	ocean.material_override = Ground.material(true).duplicate()
 	add_child(ocean)
 	var settings := Environment.new()
 	settings.background_mode = Environment.BG_COLOR
@@ -162,7 +179,9 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 		tree_index.clear()
 		for tree: Dictionary in state["trees"]: tree_index[int(tree.get("cell",int(tree["z"])*int(state["width"])+int(tree["x"])))]=tree
 	terrain.apply_land_effects(state)
+	terrain.apply_blight(state)
 	terrain.apply_voyage(state)
+	meteor_view.apply_snapshot(state)
 	apply_source_lighting()
 	if first and state.has("camera_start"):
 		if state.get("weyworld",{}).has("camera_degrees"): yaw=deg_to_rad(float(state["weyworld"]["camera_degrees"]))
@@ -174,30 +193,58 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 		update_camera(false)
 	var region_changed := refresh_region()
 	if region_changed: tree_revision = -1
-	if revision != int(state["terrain_revision"]) or region_changed:
-		var terrain_changed := revision != int(state["terrain_revision"])
+	var terrain_changed := revision != int(state["terrain_revision"])
+	if terrain_changed or region_changed:
 		revision = int(state["terrain_revision"])
 		terrain.rebuild(state)
-		if terrain_changed and not bathymetry.is_empty(): update_water_field()
+		terrain_preview=false
+	var next_depth_revision:=int(state.get("opening",{}).get("bathymetry_revision",0))
+	if not bathymetry.is_empty() and (terrain_changed or depth_revision!=next_depth_revision):
+		depth_revision=next_depth_revision
+		update_water_field()
+	if not layer_drag: clear_preview()
 	if trees_changed or state.has("tree_response") or tree_revision != revision or tree_home_count != state["homes"].size() or vegetation_revision!=int(state.get("vegetation_revision",0)):
 		tree_revision = revision
 		tree_home_count = state["homes"].size()
 		vegetation_revision=int(state.get("vegetation_revision",0))
 		update_trees()
-	for key in ["followers", "sheep","enemies"]:
-		for agent: Dictionary in state.get(key,[]):
+	var live_actors: Dictionary={}
+	var raid_rules: Dictionary=state.get("opening",{}).get("definition",{}).get("astari_raids",{})
+	var village_rules: Dictionary=state.get("opening",{}).get("definition",{}).get("astari_village",{})
+	var village: Dictionary=state.get("astari_village",{})
+	var groups: Dictionary={"followers":state["followers"],"sheep":state.get("sheep",[]),"enemies":state.get("enemies",[]),
+		"casualties":state.get("casualties",[]),"astari":village.get("performers",[])}
+	for key: String in groups:
+		for agent: Dictionary in groups[key]:
 			var id: int = agent["id"]
-			var profession: String = agent.get("profession","") if key=="followers" else ""
-			if actor_nodes.has(id) and actor_nodes[id].get_meta("profession","")!=profession:
+			live_actors[id]=true
+			var profession: String = agent.get("profession","") if key in ["followers","casualties"] else ""
+			var arrow_reaction:=agent.has("arrow_animation")
+			var civilian: bool=key!="enemies" and agent.get("race")=="Astari" and not village_rules.is_empty()
+			if actor_nodes.has(id) and (actor_nodes[id].get_meta("profession","")!=profession or actor_nodes[id].get_meta("arrow_reaction",false)!=arrow_reaction):
 				actor_nodes[id].queue_free()
 				actor_nodes.erase(id)
 			if not actor_nodes.has(id):
 				var actor: Node3D
-				var source_assets: Dictionary = follower_assets if key == "followers" else sheep_assets
+				var source_assets: Dictionary = sheep_assets if key=="sheep" else follower_assets
 				if not profession.is_empty() and resolve_worker.is_valid():
 					if not worker_assets.has(profession): worker_assets[profession]=resolve_worker.call(profession)
 					source_assets=worker_assets[profession]
-				if key=="enemies": source_assets=enemy_assets.get(agent.get("kind","champion"),{})
+				if key=="enemies":
+					var kind: String=agent.get("kind","champion")
+					if kind=="astari_archer" and not enemy_assets.has(kind) and resolve_archer.is_valid():
+						enemy_assets[kind]=resolve_archer.call(raid_rules)
+					source_assets=enemy_assets.get(kind,{})
+				elif civilian and resolve_astari_civilian.is_valid():
+					if not astari_civilian_assets.has(profession):
+						astari_civilian_assets[profession]=resolve_astari_civilian.call(source_assets,village_rules)
+					source_assets=astari_civilian_assets[profession]
+				if arrow_reaction and resolve_arrow_reaction.is_valid():
+					var cache_key: Array=[profession,civilian]
+					if not arrow_reaction_assets.has(cache_key):
+						arrow_reaction_assets[cache_key]=resolve_arrow_reaction.call(source_assets,raid_rules)
+					var recovered: Dictionary=arrow_reaction_assets[cache_key]
+					if not recovered.is_empty(): source_assets=recovered
 				if not source_assets.is_empty():
 					var human := OriginalFollower.new()
 					human.assets = source_assets
@@ -211,25 +258,38 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 				add_child(actor)
 				actor_nodes[id] = actor
 				actor.set_meta("profession",profession)
+				actor.set_meta("arrow_reaction",arrow_reaction)
 			actor_nodes[id].set_meta("data", agent)
 			actor_nodes[id].visible=agent["state"]!="indoors"
 			if actor_nodes[id] is OriginalFollower:
 				actor_nodes[id].scale=Vector3.ONE*actor_nodes[id].visual_scale*float(agent.get("scale",1))
-				var starting_sacrifice: bool=agent.has("sacrifice_elapsed") and actor_nodes[id].animation_state!=agent["state"]
-				actor_nodes[id].animation_state = agent["state"]
-				actor_nodes[id].looped=not agent.has("sacrifice_elapsed")
-				if starting_sacrifice:
+				var role: String=agent.get("arrow_animation",agent["state"])
+				var elapsed: float=agent.get("arrow_elapsed",agent.get("sacrifice_elapsed",-1))
+				if agent.has("swamp_entered"):
+					role="swamp_struggle"
+					elapsed=float(int(state["tick"])-int(agent["swamp_entered"]))*0.1
+				elif agent.has("swamp_animation"):
+					role=agent["swamp_animation"]
+					elapsed=agent["swamp_elapsed"]
+				var stage: int=agent.get("shot_stage",0)
+				var starting_clip: bool=elapsed>=0 and actor_nodes[id].animation_state!=role
+				actor_nodes[id].animation_state = role
+				actor_nodes[id].looped=elapsed<0 and stage in [-1,0,3]
+				if starting_clip:
 					actor_nodes[id].apply_animation(0.0)
-					actor_nodes[id].clip_time=float(agent["sacrifice_elapsed"])
+					actor_nodes[id].clip_time=elapsed
 					actor_nodes[id].apply_animation(0.0)
-				actor_nodes[id].playback_speed = animation_speed
+				actor_nodes[id].playback_speed = animation_speed*float(raid_rules["stats"]["AnimSpeedMult"] if stage>0 else 1.0)
 				actor_nodes[id].set_process(is_processing())
 				if actor_nodes[id].cue_audio != null:
 					actor_nodes[id].cue_audio.set_effects_enabled(effects_enabled)
 					actor_nodes[id].cue_audio.set_effects_volume(effects_db)
-	for home: Dictionary in state["homes"]:
+	var visible_homes: Array=state["homes"]+village.get("homes",[])
+	var live_homes: Dictionary={}
+	for home: Dictionary in visible_homes:
 		if home.get("settlement_core",false): continue
 		var id: int = home["id"]
+		live_homes[id]=true
 		if home_nodes.has(id) and home_nodes[id].get_meta("model_id","")!=home.get("model_id",""):
 			home_nodes[id].queue_free()
 			home_nodes.erase(id)
@@ -241,7 +301,7 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 				building=preload("res://presentation/world/assembled_building.gd").new()
 				building.data=assembled
 				building.scale=Vector3.ONE*0.003
-			elif home.get("kind","") in ["shrine","ark"]: building=Node3D.new()
+			elif home.get("kind","") in ["shrine","ark"] or home.get("village_structure",false): building=Node3D.new()
 			else: building=Actors.home(scenery_assets.get("tents", {}), Style.source_font())
 			building.set_meta("model_id",home.get("model_id",""))
 			add_child(building)
@@ -255,10 +315,10 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 					node.position=temple_position(site)
 					break
 		node.rotation_degrees.y=float(home.get("rotation",0))
-		if home.get("kind","") in ["shrine","ark"] and not node.has_method("set_stage"): continue
+		if not node.has_method("set_stage") and not node.has_node("Indicator"): continue
 		var build_ticks: int = home.get("build_ticks",state.get("build_ticks", 60))
 		var complete: bool = home["progress"] >= build_ticks
-		update_home_badge(home, node, complete)
+		if home.get("allegiance",0)==0: update_home_badge(home, node, complete)
 		if node.has_method("set_stage"):
 			node.visible=not complete
 			var parts := floori(node.maximum_part()*float(home["progress"])/build_ticks)
@@ -271,21 +331,16 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 		var label: Label3D = node.get_node("Indicator")
 		label.visible = not state.has("campaign")
 		label.text = ("+%d" % home["stored"]) if complete and home["stored"] > 0 else ("" if complete else ("Path blocked" if home["stalled"] else "%d%%" % int(home["progress"] / float(build_ticks) * 100)))
-	building_batches.update(state,home_nodes)
+	var building_state:=state.duplicate(false)
+	building_state["homes"]=visible_homes
+	building_batches.update(building_state,home_nodes)
 	for id: int in home_nodes.keys():
-		var found := false
-		for home: Dictionary in state["homes"]:
-			if home["id"]==id: found=true; break
-		if not found:
+		if not live_homes.has(id):
 			home_nodes[id].queue_free()
 			home_nodes.erase(id)
 			home_badges.erase(id)
 	for id: int in actor_nodes.keys():
-		var found := false
-		for key: String in ["followers","sheep","enemies"]:
-			for agent: Dictionary in state.get(key,[]):
-				if agent["id"]==id: found=true; break
-		if not found: actor_nodes[id].queue_free(); actor_nodes.erase(id)
+		if not live_actors.has(id): actor_nodes[id].queue_free(); actor_nodes.erase(id)
 	if state.has("progression"):
 		update_progression()
 		var next_motion := int(state.get("rock_motion",{}).get("revision",0))
@@ -372,7 +427,6 @@ func update_voyage() -> void:
 			var node := preload("res://presentation/world/assembled_building.gd").new()
 			node.data=data
 			node.scale=Vector3.ONE*0.003
-			node.position=world_position(temple["x"],temple["z"])
 			node.rotation_degrees.y=float(temple.get("rotation",0))
 			add_child(node)
 			progression_nodes[key]=node
@@ -381,6 +435,7 @@ func update_voyage() -> void:
 				if not symbol.is_empty(): node.add_child(Actors.mesh(symbol))
 		if progression_nodes.has(key):
 			var node: Node3D = progression_nodes[key]
+			node.position=world_position(temple["x"],temple["z"])
 			node.visible=not temple.get("deconstructed",false)
 			var fraction := float(temple.get("progress",0))/maxf(0.1,float(temple.get("build_seconds",0)))
 			node.set_stage(maxi(1,ceili(node.maximum_part()*fraction)),temple["complete"])
@@ -463,32 +518,65 @@ func update_trees() -> void:
 
 
 func preview_edits(edits: Array) -> void:
-	var draft := state.duplicate(false)
-	draft["terrain"] = state["terrain"].duplicate()
+	var heights: Variant=state["terrain"]
+	if heights is Array: heights=heights.duplicate()
+	var land_changed:=false
 	for edit: Dictionary in edits:
-		draft["terrain"][edit["cell"]] = edit["height"]
-	terrain.rebuild(draft,true)
+		if heights[edit["cell"]]!=edit["height"]:
+			heights[edit["cell"]]=edit["height"]
+			land_changed=true
+	if land_changed:
+		var draft:=state.duplicate(false)
+		draft["terrain"]=heights
+		terrain.rebuild(draft,true)
+	elif terrain_preview: terrain.rebuild(state,true)
+	terrain_preview=land_changed
+	if not depth_pixels.is_empty():
+		var pixels:=depth_pixels.duplicate()
+		for edit: Dictionary in edits:
+			pixels[edit["cell"]]=int(edit.get("raw_height",int(edit["height"])+19))
+		show_water_field(pixels)
+		depth_preview=true
 
 
 func cancel_preview() -> void:
 	layer_drag = false
-	if not state.is_empty():
-		terrain.rebuild(state,true)
+	clear_preview()
+
+
+func clear_preview() -> void:
+	if terrain_preview: terrain.rebuild(state,true)
+	if depth_preview: show_water_field(depth_pixels)
+	terrain_preview=false
+	depth_preview=false
 
 
 func update_water_field() -> void:
 	var width: int = state["width"]
-	var pixels := bathymetry.duplicate()
+	depth_pixels=bathymetry.duplicate()
+	var submerged: Dictionary=state.get("opening",{}).get("submerged_levels",{})
+	for key: String in submerged:
+		var index:=int(key)
+		var height:=int(state["terrain"][index])
+		depth_pixels[index]=mini(255,height+19) if height>0 else int(submerged[key])
 	for z in range(terrain_region.position.y,terrain_region.end.y):
 		for x in range(terrain_region.position.x,terrain_region.end.x):
 			var index := z*width+x
-			if state["terrain"][index] > 0: pixels[index] = mini(255,int(state["terrain"][index])+19)
+			if state["terrain"][index] > 0: depth_pixels[index]=mini(255,int(state["terrain"][index])+19)
+	show_water_field(depth_pixels)
+	depth_preview=false
+
+
+func show_water_field(pixels: PackedByteArray) -> void:
+	var width: int=state["width"]
 	var image := Image.create_from_data(width,width,false,Image.FORMAT_R8,pixels)
-	var material := Ground.material(true).duplicate() as ShaderMaterial
-	material.set_shader_parameter("use_terrain_depth",true)
-	material.set_shader_parameter("terrain_width",float(width))
-	material.set_shader_parameter("terrain_field",ImageTexture.create_from_image(image))
-	ocean.material_override = material
+	if depth_texture==null or depth_texture.get_width()!=width:
+		depth_texture=ImageTexture.create_from_image(image)
+		var material:=ocean.material_override as ShaderMaterial
+		material.set_shader_parameter("use_terrain_depth",true)
+		material.set_shader_parameter("terrain_width",float(width))
+		material.set_shader_parameter("terrain_field",depth_texture)
+	else: depth_texture.update(image)
 
 
 func height_at(x: float, z: float) -> int:
@@ -573,19 +661,20 @@ func world_position(x: float, z: float) -> Vector3:
 
 func home_at(x: float, z: float) -> int:
 	var temple := -1
-	for home: Dictionary in state.get("homes", []):
+	for home: Dictionary in state.get("homes",[])+state.get("astari_village",{}).get("homes",[]):
+		if home.get("kind","")=="village": continue
 		if x >= home["x"] - 0.5 and x < home["x"] + float(home.get("span",2))-0.5 and z >= home["z"] - 0.5 and z < home["z"] + float(home.get("span",2))-0.5:
 			if home.get("kind","")=="shrine": temple=int(home["id"])
 			else: return int(home["id"])
 	return temple
 
 
-func pick(screen: Vector2, plane_height: float = -1) -> Vector2:
+func pick(screen: Vector2, plane_height: Variant = null) -> Vector2:
 	var origin := camera.project_ray_origin(screen)
 	var ray := camera.project_ray_normal(screen)
 	var center := (int(state["width"]) - 1) * 0.5
-	if plane_height >= 0:
-		var hit := origin + ray * ((plane_height - origin.y) / ray.y)
+	if plane_height != null:
+		var hit := origin + ray * ((float(plane_height) - origin.y) / ray.y)
 		return Vector2(hit.x + center, hit.z + center)
 	for level in range(63 if state.has("campaign") else 7, -1, -1):
 		var hit := origin + ray * ((level * Terrain.STEP - origin.y) / ray.y)
@@ -607,9 +696,22 @@ func pick_shrine_cover(screen: Vector2,ground: Vector2) -> Dictionary:
 	return picked
 
 
+func finger_point(ground: Vector2) -> Vector2:
+	if ground.x<0: return ground
+	var origin := camera.project_ray_origin(pointer_screen)
+	var direction := camera.project_ray_normal(pointer_screen)
+	var closest := origin.distance_to(world_position(ground.x,ground.y))
+	var home := pick_home_mesh(origin,direction,closest)
+	var tree_cell: int=trees.pick_tree(origin,direction,float(home.get("distance",closest)))
+	if tree_cell>=0 and tree_index.has(tree_cell):
+		var tree: Dictionary=tree_index[tree_cell]
+		return Vector2(tree["x"],tree["z"])
+	return home.get("point",ground)
+
+
 func pick_home_mesh(origin: Vector3,direction: Vector3,closest: float=INF) -> Dictionary:
 	var picked := {}
-	for home: Dictionary in state["homes"]:
+	for home: Dictionary in state["homes"]+state.get("astari_village",{}).get("homes",[]):
 		if home.get("kind","")=="shrine" or not home_nodes.has(int(home["id"])): continue
 		var node: Node3D=home_nodes[int(home["id"])]
 		var assembly: Node3D=node.get_node_or_null("Building") if not node.has_method("set_stage") else node
@@ -787,6 +889,7 @@ func _process(delta: float) -> void:
 	advance_pit_beam(delta)
 	if state.is_empty():
 		return
+	meteor_view.advance(delta*animation_speed,camera)
 	if state.has("opening"):
 		var observation := camera_observation()
 		if observation["projection"]!=observer_projection:
@@ -813,6 +916,14 @@ func _process(delta: float) -> void:
 			if state.has("progression"):
 				update_rocks()
 				update_progression()
+	chest_glints.advance(delta*animation_speed,camera)
+	if finger_preview:
+		var opening: Dictionary=state.get("opening",{})
+		finger_view.advance(delta*animation_speed,opening.get("finger_cast",{}),opening.get("definition",{}).get("finger_of_god",{}),
+			pick(pointer_screen),self)
+	elif finger_view.visible:
+		finger_view.hide()
+		finger_view.stroke.clear()
 	var direction := Vector2.ZERO
 	if Input.is_physical_key_pressed(KEY_W): direction.y -= 1
 	if Input.is_physical_key_pressed(KEY_S): direction.y += 1
@@ -829,15 +940,21 @@ func _process(delta: float) -> void:
 	for actor: Node3D in actor_nodes.values():
 		var data: Dictionary = actor.get_meta("data")
 		if actor is OriginalFollower:
-			actor.animation_state = data["state"]
-			actor.playback_speed = animation_speed
+			var archer: bool=data.get("kind")=="astari_archer"
+			var definition: Dictionary=state.get("opening",{}).get("definition",{})
+			var speed: float=1.0
+			if archer: speed=definition.get("astari_raids",{}).get("stats",{}).get("AnimSpeedMult",1)
+			elif data.get("race")=="Astari": speed=definition.get("astari_village",{}).get("actor_stats",{}).get("AnimSpeedMult",1)
+			actor.playback_speed = animation_speed*speed
 			var pixels := get_viewport().get_visible_rect().size.y/zoom
 			actor.animation_interval=0.0 if pixels>50 else (1.0/30 if pixels>15 else (1.0/15 if pixels>4 else 1.0/8))
 			if not camera.is_position_in_frustum(actor.position+Vector3(0,0.7,0)): actor.animation_interval=0.5
 		var target := world_position(data["x"], data["z"])
 		var offset := target - actor.position
 		actor.position = actor.position.lerp(target, minf(delta * 14, 1))
-		if data["state"] in ["hugging_give","hugging_take"]:
+		if int(data.get("shot_stage",0))>0:
+			actor.rotation.y=lerp_angle(actor.rotation.y,deg_to_rad(float(data["rotation"])),minf(delta*10,1))
+		elif data["state"] in ["hugging_give","hugging_take"]:
 			for partner: Dictionary in state["followers"]:
 				if partner["id"]==data["id"] or not partner["state"] in ["hugging_give","hugging_take"]: continue
 				var hug_direction := Vector2(float(partner["x"])-float(data["x"]),float(partner["z"])-float(data["z"]))
@@ -876,20 +993,21 @@ func visible_temple_at(point: Vector2) -> String:
 
 
 func temple_position(site: Dictionary) -> Vector3:
-	# The same authored anchor applies before, during and after repair. House
-	# plot centers must not move a temple when its construction record appears.
+	# Keep the authored horizontal anchor throughout repair. Older terrain
+	# edits may have left that anchor's ground below the shrine.
 	var offset := 0.0 if site.get("source_center",false) else 0.5
 	var position_ := world_position(float(site["x"])+offset,float(site["z"])+offset)
 	if site.get("source_height")!=null:
-		position_.y=(float(site["source_height"])-float(state.get("source_map",{}).get("sea_level",19)))*Terrain.STEP
+		var authored_height := (float(site["source_height"])-float(state.get("source_map",{}).get("sea_level",19)))*Terrain.STEP
+		position_.y=minf(position_.y,authored_height)
 	return position_
 
 
 func progression_at(point: Vector2) -> Dictionary:
 	if not state.has("progression"): return {}
 	for prop: Dictionary in state.get("props",[]):
-		if prop.get("kind")=="belief_collector" and Vector2(prop["x"],prop["z"]).distance_squared_to(point)<=0.5:
-			return {"type":"inspect_belief_collector","id":prop["id"]}
+		if prop.get("kind") in ["belief_collector","capacity_shrine","speed_shrine"] and Vector2(prop["x"],prop["z"]).distance_squared_to(point)<=0.5:
+			return {"type":"inspect_"+str(prop["kind"]),"id":prop["id"]}
 	var rules: Dictionary=state.get("opening",{}).get("definition",{}).get("fountain",{})
 	if not rules.is_empty():
 		for prop: Dictionary in state.get("props",[]):
@@ -899,7 +1017,7 @@ func progression_at(point: Vector2) -> Dictionary:
 	var p: Dictionary = state["progression"]
 	for chest: Dictionary in p["chests"]:
 		var exposed: bool=chest.get("exposed",height_at(chest["x"],chest["z"])<=chest["height"])
-		if not chest["opened"] and not chest.get("opening",false) and chest["height"]>=0 and exposed and point.distance_to(Vector2(chest["x"],chest["z"]))<0.7: return {"type":"open_chest","id":chest["id"]}
+		if not chest["opened"] and not chest.get("opening",false) and (chest["height"]>=0 or chest.get("native",false)) and exposed and point.distance_to(Vector2(chest["x"],chest["z"]))<0.7: return {"type":"open_chest","id":chest["id"]}
 	var x := floori(point.x) if state.has("source_scenery") else roundi(point.x)
 	var z := floori(point.y) if state.has("source_scenery") else roundi(point.y)
 	var cell: int = z*int(state["width"])+x
@@ -924,6 +1042,7 @@ func tree_targetable(x: int,z: int,cell: int) -> bool:
 
 func update_progression() -> void:
 	var p: Dictionary = state["progression"]
+	chest_glints.sync(p["chests"],int(state["width"]),int(state.get("tick",0)),terrain_region,ocean.position.y)
 	var current_sites := {}
 	for site: Dictionary in p["shrines"]: current_sites["shrine:"+str(site["id"])]=true
 	var current_chests := {}
@@ -939,11 +1058,14 @@ func update_progression() -> void:
 				progression_nodes[used_key].queue_free()
 				progression_nodes.erase(used_key)
 			continue
-		if chest["height"]<0 or not terrain_region.has_point(Vector2i(chest["x"],chest["z"])): continue
+		var exposed: bool=chest.get("exposed",height_at(chest["x"],chest["z"])<=chest["height"])
+		var submerged: bool=chest["height"]<0.0
+		if submerged and not (chest.get("native",false) and (exposed or chest.get("opening",false))): continue
+		if not terrain_region.has_point(Vector2i(chest["x"],chest["z"])): continue
 		var key: String = "chest:"+chest["id"]
 		if not progression_nodes.has(key) and resolve_unit.is_valid():
 			# All meshes and three lifecycle clips are recovered from chest.group.
-			var model: String = {"treasure1":"f844d7b4","treasure2":"002572ae","treasure3":"009a2c5c","treasure4":"eae1d693"}.get(chest["type"],"")
+			var model: String = {"treasure1":"f844d7b4","treasure2":"002572ae","treasure3":"009a2c5c","treasure4":"eae1d693","treasure5":"6c5ed019"}.get(chest["type"],"")
 			var id := "chest.group.bin:"+model
 			if not unit_assets.has(id): unit_assets[id]=resolve_unit.call(id)
 			if unit_assets[id].is_empty(): continue
@@ -952,14 +1074,12 @@ func update_progression() -> void:
 			actor.visual_scale=0.003
 			actor.animation_state="chest_stuck"
 			actor.position=world_position(chest["x"],chest["z"])
-			actor.position.y=float(chest["height"])*Terrain.STEP
 			actor.rotation_degrees.y=float(chest["rotation"])
 			add_child(actor)
 			progression_nodes[key]=actor
 		if progression_nodes.has(key):
 			var actor: Node3D = progression_nodes[key]
-			var exposed: bool=chest.get("exposed",height_at(chest["x"],chest["z"])<=chest["height"])
-			actor.position.y=float(chest["height"])*Terrain.STEP
+			actor.position.y=ocean.position.y if submerged else float(chest["height"])*Terrain.STEP
 			actor.animation_state="chest_open" if chest.get("opening",chest["opened"]) else ("chest_freed" if exposed else "chest_stuck")
 			actor.looped=not chest.get("opening",chest["opened"])
 			actor.set_process(is_processing())

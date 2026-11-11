@@ -12,12 +12,37 @@ var beautify_gain := 0.0
 var beautify: Dictionary = {}
 var rain_active := false
 var rain_voices: Array[Dictionary] = []
+var meteor_voices: Dictionary = {}
 
 
 func play_event(kind: String) -> void:
 	var source: String = {"chest_opened":"PLAYSOUND_FOLLOWERSTATEREACTTOCHEST","claim_card":"PLAYSOUND_FOLLOWERSTATECELEBRATECARD",
 		"belief_collector_collected":"Shrine belief collection"}.get(kind,kind)
 	super.play_event(source)
+
+
+func play_meteor_event(kind: String,id: int) -> void:
+	stop_meteor(id)
+	if kind!="Meteor Strike launch":
+		play_event(kind)
+		return
+	var samples: Array=assets.get(kind,[])
+	if not effects_enabled or samples.is_empty(): return
+	var player:=AudioStreamPlayer.new()
+	player.stream=samples[0]
+	player.volume_db=effects_db
+	add_child(player)
+	meteor_voices[id]=player
+	player.finished.connect(stop_meteor.bind(id))
+	player.play()
+
+
+func stop_meteor(id: int) -> void:
+	var player: AudioStreamPlayer=meteor_voices.get(id)
+	if player==null: return
+	meteor_voices.erase(id)
+	player.stop()
+	player.queue_free()
 
 
 func _ready() -> void:
@@ -71,6 +96,7 @@ func set_effects_enabled(value: bool) -> void:
 		set_sculpting(false)
 		stop_beautify()
 		set_rain_active(false)
+		for id: int in meteor_voices.keys(): stop_meteor(id)
 
 
 func set_rain_active(active: bool) -> void:
@@ -102,6 +128,7 @@ func set_rain_gain(gain: float,voice: Dictionary) -> void:
 func set_effects_volume(value: float) -> void:
 	super.set_effects_volume(value)
 	for voice: Dictionary in rain_voices: set_rain_gain(voice["gain"],voice)
+	for player: AudioStreamPlayer in meteor_voices.values(): player.volume_db=value
 
 
 func beautify_contact() -> void:

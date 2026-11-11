@@ -49,24 +49,32 @@ static func new_region(tile: Vector2i,width: int,sizes: Array,loaded: Callable,c
 			smallest=mini(smallest,int(limits[0]))
 	if smallest<=0 or largest>MAX_SIZE or smallest>largest: return result
 	var reserved := occupied.duplicate(false)
+	var origins: Array[Vector3i]=[]
+	for z in range(maxi(0,tile.y*32-32),mini(width,tile.y*32+32)):
+		for x in range(maxi(0,tile.x*32-32),mini(width,tile.x*32+32)):
+			if reserved.has(z*width+x) or not loaded.call(x,z): continue
+			var capacity := int(clear_capacity.call(x,z))
+			if capacity>=smallest and eligible.call(x,z): origins.append(Vector3i(x,z,capacity))
+	# Terrain, loading and influence stay fixed during allocation. Reservations
+	# change as plots are assigned, so the size and footprint passes keep their
+	# original order and recheck occupancy against the current reservations.
 	for size: int in range(largest,smallest-1,-1):
-		for z in range(maxi(0,tile.y*32-32),mini(width,tile.y*32+32)):
-			for x in range(maxi(0,tile.x*32-32),mini(width,tile.x*32+32)):
-				# All callbacks are pure. Reject an ineligible origin before the
-				# capacity scan; it is also a required cell of the final footprint.
-				if reserved.has(z*width+x) or not loaded.call(x,z) or not eligible.call(x,z) or int(clear_capacity.call(x,z))<size: continue
-				var half: int=size/2
-				var band := int(location.call(x+half,z+half))
-				if band<0 or band>=sizes.size() or size<int(sizes[band][0]) or size>int(sizes[band][1]): continue
-				var valid := true
-				for dz in range(size):
-					for dx in range(size):
-						var cell := (z+dz)*width+x+dx
-						if reserved.has(cell) or not eligible.call(x+dx,z+dz): valid=false; break
-					if not valid: break
-				if not valid: continue
-				result.append({"id":result.size(),"x":x,"z":z,"size":size})
-				for dz in range(size):
-					for dx in range(size): reserved[(z+dz)*width+x+dx]=true
-				if result.size()==mini(MAX_PLOTS,available): return result
+		var half: int=size/2
+		for origin: Vector3i in origins:
+			var x:=origin.x
+			var z:=origin.y
+			if origin.z<size or reserved.has(z*width+x): continue
+			var band := int(location.call(x+half,z+half))
+			if band<0 or band>=sizes.size() or size<int(sizes[band][0]) or size>int(sizes[band][1]): continue
+			var valid := true
+			for dz in range(size):
+				for dx in range(size):
+					var cell := (z+dz)*width+x+dx
+					if reserved.has(cell) or not eligible.call(x+dx,z+dz): valid=false; break
+				if not valid: break
+			if not valid: continue
+			result.append({"id":result.size(),"x":x,"z":z,"size":size})
+			for dz in range(size):
+				for dx in range(size): reserved[(z+dz)*width+x+dx]=true
+			if result.size()==mini(MAX_PLOTS,available): return result
 	return result

@@ -3,6 +3,7 @@ extends RefCounted
 ## pure simulation services. A render query must operate on a detached cache.
 
 const Numbers = preload("res://simulation/source_plot_schedule.gd")
+const Unlocks = preload("res://simulation/source_unlocks.gd")
 
 
 static func initial() -> Dictionary:
@@ -54,3 +55,9 @@ static func refresh(cache: Dictionary,global_cache: Dictionary,rules: Dictionary
 static func era(cache: Dictionary,rules: Dictionary,service: Callable) -> int:
 	if not refresh(cache,cache,rules,service): return 0
 	return int(cache["era"])
+
+
+static func sticker_era(progression: Dictionary,rules: Dictionary) -> int:
+	if rules.is_empty(): return int(progression.get("age",1))
+	return era(initial(),rules,func(name: String,args: Array) -> bool:
+		return name=="unlocked" and Unlocks.enabled(progression,args[0]))

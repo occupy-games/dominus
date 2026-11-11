@@ -57,10 +57,18 @@ static func refresh_expired(state: Dictionary,cells: Array) -> void:
 	refresh(state,state["homes"],[center.x,center.y,bounds.size.length()*0.5],true)
 
 
-static func belief_modifier(state: Dictionary,home: Dictionary) -> float:
-	var base := float(home.get("belief_modifier",0))
+static func belief_modifier(state: Dictionary,home: Dictionary,base: float) -> float:
 	var rules := rules_for(state)
 	var fraction := float(home.get("beauty_fraction",0.0))
+	var trees := int(home.get("nearby_trees",0))
+	var seeds := int(home.get("nearby_seed_trees",0))
+	if (trees>0 or seeds>0) and state.has("opening"):
+		var records: Array=state["opening"]["definition"].get("house_environment",[])
+		if not records.is_empty():
+			var values := {"belief modifier":base}
+			var unlocked := func(id: String) -> bool: return Unlocks.enabled(state["progression"],id)
+			EnvironmentBuffs.apply(values,records,{"special":false},false,[trees,seeds,0],fraction,unlocked)
+			return values["belief modifier"]
 	if rules.is_empty() or fraction==0.0:
 		return base
 	var buff: Dictionary=rules["buff"]

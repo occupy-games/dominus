@@ -19,7 +19,6 @@ var speed := 1.0
 var accumulator := 0.0
 var model_definitions: Dictionary = {}
 var scenery_snapshot: Array = []
-var scenery_cached := false
 
 
 func new_world(world_seed: int = 2026) -> void:
@@ -30,7 +29,6 @@ func new_world(world_seed: int = 2026) -> void:
 	var random := RandomNumberGenerator.new()
 	random.seed = world_seed
 	world.initialize({"world_seed": world_seed, "models": model_definitions}, random)
-	scenery_cached = false
 	paused = false
 	accumulator = 0.0
 	refresh_queries()
@@ -46,7 +44,6 @@ func new_campaign(definition: Dictionary) -> void:
 	var random := RandomNumberGenerator.new()
 	random.seed = 2026
 	world.initialize({"campaign_data": config, "models": model_definitions}, random)
-	scenery_cached = false
 	paused = false
 	accumulator = 0
 	refresh_queries()
@@ -63,7 +60,6 @@ func begin_leash_lesson() -> bool:
 	random.seed=2026
 	world.initialize({"leash_lesson":source,"models":model_definitions},random)
 	staged_commands.clear()
-	scenery_cached=false
 	accumulator=0.0
 	refresh_queries()
 	return true
@@ -75,7 +71,6 @@ func return_from_leash_lesson() -> bool:
 	world=tutorial_home
 	tutorial_home=null
 	staged_commands.clear()
-	scenery_cached=false
 	accumulator=0.0
 	var events:=world.step([{"type":"campaign_leash_lesson_completed"}])
 	refresh_queries()
@@ -113,7 +108,6 @@ func sail_ark() -> Dictionary:
 	world=next
 	store=target
 	staged_commands.clear()
-	scenery_cached=false
 	accumulator=0
 	refresh_queries()
 	return saved
@@ -157,14 +151,8 @@ func advance_elapsed(delta: float) -> void:
 
 func presentation_snapshot() -> Dictionary:
 	if threaded and not latest_snapshot.is_empty(): return latest_snapshot.duplicate(false)
-	# Scenery is static simulation data. Freeze a detached copy once; it can be
-	# shared safely by later snapshots without copying thousands of dictionaries.
-	if not scenery_cached:
-		scenery_snapshot = world.snapshot()["trees"]
-		for tree: Dictionary in scenery_snapshot: tree.make_read_only()
-		scenery_snapshot.make_read_only()
-		scenery_cached = true
 	var result := world.snapshot(false)
+	scenery_snapshot=world.shared_trees()
 	result["trees"] = scenery_snapshot
 	return result
 
@@ -206,16 +194,27 @@ func load_game(path: String = "") -> Dictionary:
 	var needs_discovery: bool=not opening.is_empty() and not opening.get("definition",{}).has("discovery_site_id")
 	var needs_leash: bool=not opening.is_empty() and not opening.get("definition",{}).has("leash_population_card")
 	var needs_dock: bool=not opening.is_empty() and not opening["definition"].get("constants",{}).has("FIRST_VOYAGE_RETURN")
-	var needs_farming: bool=not opening.is_empty() and (not opening["definition"].has("farming_population_card") or not opening["definition"].has("housing_advances") or not opening["definition"].get("source_chest_stickers",false))
+	var needs_farming: bool=not opening.is_empty() and (not opening["definition"].has("farming_population_card") or not opening["definition"].has("housing_advances") or not opening["definition"].has("sticker_advances") or not opening["definition"].get("source_chest_stickers",false))
+	var needs_storms: bool=not opening.is_empty() and not opening["definition"].has("storm_timing")
+	var needs_pack_chests: bool=not opening.is_empty() and not opening["definition"].has("authored_pack_chests")
+	var needs_environment: bool=not opening.is_empty() and not opening["definition"].has("environment_advances")
 	var needs_grain: bool=not opening.is_empty() and (not opening["definition"].has("grain_building_card") or not opening["definition"].has("grain_advances") or not opening["definition"].has("mining_core") or not opening["definition"].has("stone_abodes"))
 	var needs_ark: bool=not opening.is_empty() and not opening["definition"].get("ark",{}).has("sail_labels")
 	var needs_pit: bool=not opening.is_empty() and not opening["definition"].has("pit_sacrifice")
 	var needs_rain: bool=not opening.is_empty() and not opening["definition"].has("rain")
 	var needs_fountain: bool=not opening.is_empty() and not opening["definition"].has("fountain")
 	var needs_mud_lodge: bool=not opening.is_empty() and not opening["definition"].has("mud_lodge")
+	var stone_abodes: Dictionary=opening.get("definition",{}).get("stone_abodes",{})
+	var needs_later_housing: bool=not opening.is_empty() and (not opening["definition"].has("beach_lodge") or not stone_abodes.has("StoneHouse_Rank_3") or not stone_abodes.has("StoneHouse_Rank_4"))
 	var needs_cliff: bool=not opening.is_empty() and not opening["definition"].get("cliff_sculpt",{}).has("upgrades")
+	var needs_later_powers: bool=not opening.is_empty() and (not opening["definition"].has("underwater_sculpt") or not opening["definition"].has("capacity_shrine") or not opening["definition"].has("swamp") or not opening["definition"].has("meteor") or not opening["definition"].has("speed_shrine") or not opening["definition"].has("settlement_upgrades"))
 	var needs_belief_advances: bool=not opening.is_empty() and (not opening["definition"].has("rock_belief") or not opening["definition"].has("belief_collector"))
-	if needs_ark or needs_belief_advances or needs_cliff or needs_mud_lodge or needs_fountain or needs_rain or needs_pit or needs_grain or needs_farming or needs_dock or needs_leash or needs_discovery or needs_belief or needs_shrine or needs_housing or needs_timeline or opening.get("phase")=="promised_land" and (opening.get("promised_step") in [3,6,9,10] and not opening.get("handoff",{}).get("available",true) or needs_chest):
+	var needs_god_seed: bool=not opening.is_empty() and not opening["definition"].has("god_seed")
+	var needs_finger: bool=not opening.is_empty() and not opening["definition"].has("finger_of_god")
+	var needs_raids: bool=not opening.is_empty() and not opening["definition"].has("astari_raids")
+	var needs_village: bool=not opening.is_empty() and not opening["definition"].has("astari_village")
+	var needs_core_stats: bool=not opening.is_empty() and not opening["definition"].get("farming_core",{}).has("belief_modifier")
+	if needs_ark or needs_belief_advances or needs_god_seed or needs_finger or needs_raids or needs_village or needs_core_stats or needs_cliff or needs_later_powers or needs_mud_lodge or needs_later_housing or needs_fountain or needs_rain or needs_pit or needs_grain or needs_farming or needs_storms or needs_pack_chests or needs_environment or needs_dock or needs_leash or needs_discovery or needs_belief or needs_shrine or needs_housing or needs_timeline or opening.get("phase")=="promised_land" and (opening.get("promised_step") in [3,6,9,10] and not opening.get("handoff",{}).get("available",true) or needs_chest):
 		var content := preload("res://infrastructure/campaign_content.gd").for_state(saved)
 		if content.has("story"): candidate.resume_opening_handoff(content["story"])
 	candidate.prepare_loaded_opening()
@@ -237,7 +236,6 @@ func load_game(path: String = "") -> Dictionary:
 	world = candidate
 	tutorial_home=null
 	store=target
-	scenery_cached = false
 	world.set_model_definitions(model_definitions)
 	accumulator = 0.0
 	paused = false
@@ -265,12 +263,8 @@ func receive_voyage_rewards(profile: Dictionary, rules: Dictionary) -> Dictionar
 
 func refresh_queries() -> void:
 	query_world=world.query_copy()
-	if not scenery_cached:
-		scenery_snapshot=world.snapshot()["trees"]
-		for tree: Dictionary in scenery_snapshot: tree.make_read_only()
-		scenery_snapshot.make_read_only()
-		scenery_cached=true
 	latest_snapshot=world.snapshot(false)
+	scenery_snapshot=world.shared_trees()
 	latest_snapshot["trees"]=scenery_snapshot
 
 
@@ -291,7 +285,9 @@ func advance_batch(ticks: int,commands: Array) -> Dictionary:
 	for command: Dictionary in commands: world.queue_command(command)
 	var events: Array=[]
 	for tick in range(ticks): events.append_array(world.step())
-	return {"snapshot":world.snapshot(false),"query":world.query_copy(),"events":events,"usec":Time.get_ticks_usec()-started}
+	var snapshot:=world.snapshot(false)
+	snapshot["trees"]=world.shared_trees()
+	return {"snapshot":snapshot,"query":world.query_copy(),"events":events,"usec":Time.get_ticks_usec()-started}
 
 
 func finish_worker(publish: bool = true) -> void:
@@ -299,7 +295,7 @@ func finish_worker(publish: bool = true) -> void:
 	var result: Dictionary=worker.wait_to_finish()
 	query_world=result["query"]
 	latest_snapshot=result["snapshot"]
-	latest_snapshot["trees"]=scenery_snapshot
+	scenery_snapshot=latest_snapshot["trees"]
 	last_batch_usec=result["usec"]
 	# Always publish a completed boundary, including when paused. No simulation
 	# writes are allowed until this thread hands ownership back to application.

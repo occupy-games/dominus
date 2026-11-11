@@ -35,6 +35,7 @@ func configure(rules: Dictionary) -> void:
 		var row := {"Race":race}
 		for column: String in follower_columns: row[column]="default"
 		row.merge({"MaxHealth":100,"RouteSpeed":1.3,"Vision":7,"JobSkill":1,"Scale":1},true)
+		if race=="Astari": row.merge({"RouteSpeed":1.35,"Strength":1,"Scale":0.96},true)
 		followers[race]=row
 
 func ensure_files() -> Dictionary:

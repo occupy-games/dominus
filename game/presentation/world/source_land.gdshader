@@ -16,6 +16,9 @@ uniform bool voyage_hazards_enabled = false;
 uniform sampler2D voyage_hazards : filter_linear, repeat_disable;
 uniform sampler2D blight_gradient : filter_linear, repeat_disable;
 uniform float voyage_width = 1.0;
+uniform bool blight_enabled = false;
+uniform sampler2D blight_field : filter_linear, repeat_disable;
+uniform float blight_width = 1.0;
 #include "res://presentation/world/influence.gdshaderinc"
 varying vec3 source_pos;
 varying vec3 source_normal;
@@ -34,6 +37,11 @@ void fragment() {
         vec3 blighted = texture(blight_gradient, vec2(max(fields.r, fields.g), 0.5)).rgb;
         base = mix(base, blighted, max(fields.r, fields.g));
         base = mix(base, texture(palette, (vec2(2.0,38.0)+0.5)/128.0).rgb, fields.b);
+    }
+    if (blight_enabled) {
+        vec2 field_uv = (source_pos.xz + blight_width * 0.5) / blight_width;
+        float blight = min(1.0, texture(blight_field, field_uv).r * (255.0 / 128.0));
+        base = mix(base, texture(blight_gradient, vec2(blight, 0.5)).rgb, blight);
     }
     if (beautify_enabled) {
         vec2 grid = source_pos.xz + (beauty_width - 1.0) * 0.5;

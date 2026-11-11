@@ -61,9 +61,46 @@ static func inspect(world: RefCounted,state: Dictionary,command: Dictionary) -> 
 		if world.source_shrine_bounds(candidate).has_point(cell):
 			site=candidate
 			break
-	if pit.is_empty() and site.is_empty() and (world.height_at(cell.x,cell.y)<=0 or world._occupied(cell.x,cell.y)): return reject
+	var cost: int=selected.size()*int(rules["follower_cost"])
+	if not house_agent.is_empty(): cost+=int(rules["home_cost"])
+	var abode_id: int=-1
+	var abode_area:=Rect2i()
+	var abode_capacity:=0
+	if pit.is_empty() and site.is_empty():
+		var builders_only:=agents.all(func(agent: Dictionary) -> bool: return agent.get("profession","") in ["","builder"])
+		var plots: Dictionary=state.get("source_plots",{})
+		var plot_id: int=plots.get("owners",{}).get(str(floori(z)*int(state["width"])+floori(x)),-1)
+		if builders_only and plot_id>=0 and plot_id in plots["active"]:
+			for agent: Dictionary in agents:
+				if Vector2(agent["x"],agent["z"]).distance_to(destination)>float(rules["max_length"]): return reject
+			var plot: Dictionary=plots["slots"][plot_id]
+			if not world.promised_growth_plots().has(plot): return reject
+			var abode: Dictionary=world.plan_promised_abode(plot,-1,agents)
+			if abode.is_empty(): return reject
+			var assignments: Array=agents.map(func(agent: Dictionary) -> Dictionary: return {"id":agent["id"]})
+			return {"ok":state["belief"]>=cost,"cost":cost,"reason":"","shortage":state["belief"]<cost,
+				"abode_plan":abode,"home_id":int(home_id),"home_follower":house_agent.get("follower",{}).get("id",-1),"assignments":assignments}
+		if world.height_at(cell.x,cell.y)<=0: return reject
+		if world._occupied(cell.x,cell.y):
+			if not builders_only: return reject
+			for home: Dictionary in state["homes"]:
+				if not home.has("source_house") or home["progress"]>=home["build_ticks"]: continue
+				var area:=Rect2i(home["x"],home["z"],home["span"],home["span"])
+				if not area.has_point(cell): continue
+				abode_id=home["id"]
+				abode_area=area
+				abode_capacity=home["build_capacity"]
+				break
+			if abode_id<0: return reject
 	if boarding and world.source_ark_berths(site)<agents.size(): return reject
 	var reserved:={}
+	if abode_id>=0:
+		var assigned:=0
+		for agent: Dictionary in state["followers"]:
+			if agent["job"]!=abode_id: continue
+			assigned+=1
+			reserved[Vector2i(agent["work_x"],agent["work_z"])]=true
+		if assigned+agents.size()>abode_capacity: return reject
 	var assignments:=[]
 	for agent: Dictionary in agents:
 		var from:=Vector2(agent["x"],agent["z"])
@@ -79,24 +116,29 @@ static func inspect(world: RefCounted,state: Dictionary,command: Dictionary) -> 
 			plan=world.source_ark_boarding_plan(site,origin,reserved) if boarding else world.source_shrine_repair_plan(site,origin,reserved)
 			if plan.is_empty(): return reject
 			reserved[plan["target"]]=true
+		elif abode_id>=0:
+			plan=world._promised_abode_approach(origin,abode_area,reserved,true)
+			if plan.is_empty(): return reject
+			reserved[plan["target"]]=true
 		else:
 			var route: Array=world._route(origin,cell)
 			if origin!=cell and route.is_empty(): return reject
 			plan={"target":cell,"path":route}
 		plan["id"]=int(agent["id"])
 		assignments.append(plan)
-	var cost: int=selected.size()*int(rules["follower_cost"])
-	if not house_agent.is_empty(): cost+=int(rules["home_cost"])
 	return {"ok":state["belief"]>=cost,"cost":cost,"reason":"","assignments":assignments,"home_id":int(home_id),
 		"home_follower":house_agent.get("follower",{}).get("id",-1),"repair_site":"" if boarding else site.get("id",""),
-		"boarding":site["id"] if boarding else "","sacrifice":not pit.is_empty(),
+		"boarding":site["id"] if boarding else "","sacrifice":not pit.is_empty(),"abode_id":abode_id,
 		"shortage":state["belief"]<cost}
 
 
 static func apply(world: RefCounted,state: Dictionary,plan: Dictionary) -> void:
-	if plan["home_id"]>=0:
-		for home: Dictionary in state["homes"]:
-			if home["id"]==plan["home_id"]: home["residents"]-=1; break
+	if plan.has("abode_plan"):
+		if not world.start_promised_abode(plan["abode_plan"]): return
+		release_house_follower(state,plan)
+		for route: Dictionary in plan["abode_plan"]["routes"]: route["follower"].erase("leash_sacrifice")
+		return
+	release_house_follower(state,plan)
 	var building_id := -1
 	for assignment: Dictionary in plan["assignments"]:
 		for agent: Dictionary in state["followers"]:
@@ -105,14 +147,15 @@ static func apply(world: RefCounted,state: Dictionary,plan: Dictionary) -> void:
 			if plan["sacrifice"]:
 				for key: String in ["workplace","profession","settlement_id","carrying"]: agent.erase(key)
 				agent["leash_sacrifice"]=true
-			if agent["id"]==plan["home_follower"]:
-				agent["away_home"]=plan["home_id"]
-				agent.erase("indoors_home")
 			if not plan["repair_site"].is_empty():
 				agent.erase("leash_goal")
 				if building_id!=-1: assignment["building_id"]=building_id
 				world.assign_source_shrine(agent,assignment)
 				building_id=agent["job"]
+			elif plan["abode_id"]>=0:
+				var target: Vector2i=assignment["target"]
+				agent.erase("leash_goal")
+				agent.merge({"job":plan["abode_id"],"work_x":target.x,"work_z":target.y,"path":assignment["path"],"state":"walking"},true)
 			else:
 				var target: Vector2i=assignment["target"]
 				if not plan.get("boarding","").is_empty(): agent["ark_boarding"]=plan["boarding"]
@@ -120,6 +163,17 @@ static func apply(world: RefCounted,state: Dictionary,plan: Dictionary) -> void:
 				agent["path"]=assignment["path"]
 				agent["state"]="walking"
 			break
+
+
+static func release_house_follower(state: Dictionary,plan: Dictionary) -> void:
+	if plan["home_id"]<0: return
+	for home: Dictionary in state["homes"]:
+		if home["id"]==plan["home_id"]: home["residents"]-=1; break
+	for follower: Dictionary in state["followers"]:
+		if follower["id"]!=plan["home_follower"]: continue
+		follower["away_home"]=plan["home_id"]
+		follower.erase("indoors_home")
+		break
 
 
 static func advance_walks(world: RefCounted,state: Dictionary) -> void:
@@ -133,13 +187,14 @@ static func advance_walks(world: RefCounted,state: Dictionary) -> void:
 				world.board_source_ark(agent["ark_boarding"],agent)
 				continue
 			agent.erase("leash_goal")
+			agent["path"]=[]
 			agent["state"]="idle"
 			continue
 		if agent["path"].is_empty():
 			var origin:=Vector2i(position.round())
 			agent["path"]=Pit.route(world,state,world.source_shrine_site(),origin) if agent.get("leash_sacrifice",false) else world._route(origin,target)
 		world.finish_promised_approach(agent,target)
-		if not agent["path"].is_empty(): world._update_agent(agent,false)
+		if not agent["path"].is_empty(): world.advance_agent_path(agent,false)
 		else: agent["state"]="waiting"
 
 

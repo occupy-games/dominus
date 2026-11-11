@@ -21,20 +21,36 @@ const Pit = preload("res://simulation/campaign_pit.gd")
 const Rain = preload("res://simulation/campaign_rain.gd")
 const Fountain = preload("res://simulation/campaign_fountain.gd")
 const Cliff = preload("res://simulation/campaign_cliff_sculpt.gd")
+const WaterSculpt = preload("res://simulation/source_underwater_sculpt.gd")
+const Swamp = preload("res://simulation/campaign_swamp.gd")
+const Meteor = preload("res://simulation/campaign_meteor.gd")
 const Collector = preload("res://simulation/campaign_belief_collector.gd")
+const Capacity = preload("res://simulation/campaign_capacity_shrine.gd")
+const SpeedShrine = preload("res://simulation/campaign_speed_shrine.gd")
+const Monuments = preload("res://simulation/campaign_monuments.gd")
+const SettlementUpgrades = preload("res://simulation/campaign_settlement_upgrades.gd")
+const GodSeed = preload("res://simulation/campaign_god_seed.gd")
+const Finger = preload("res://simulation/campaign_finger.gd")
+const AstariRaids = preload("res://simulation/campaign_astari_raids.gd")
+const Astari = preload("res://simulation/campaign_astari.gd")
+const TempleRules = preload("res://simulation/temple_rules.gd")
 const Beautify = preload("res://simulation/source_beautify.gd")
 const AbodeBeauty = preload("res://simulation/campaign_abode_beauty.gd")
 const LandEffectTimer = preload("res://simulation/source_land_effect_timer.gd")
 const SourceRaster = preload("res://simulation/source_influence.gd")
 const MAX_HEIGHT := 63
+const SCULPT_SUPPORT_REASON := "This land supports a shrine or totem."
 const DIRECTIONS := [Vector2i.LEFT, Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN]
 var _state: Dictionary
+var _state_generation := 0
 var _random: RandomNumberGenerator
 var _pending: Array = []
 var _models: Dictionary = {}
 var _dry_land := 0
 var _route_cache: Dictionary = {}
+var _plot_reachability: Dictionary = {}
 var _blocked_cells: Dictionary = {}
+var _shrine_foundations: Dictionary = {}
 var _navigation_stamp := 0
 var _component_of: Dictionary = {}
 var _plan_reserved: Dictionary = {}
@@ -46,12 +62,19 @@ var _tree_cells: Dictionary = {}
 var _tree_coast: Dictionary = {}
 var _tree_rows: Dictionary = {}
 var _tree_tiles: Dictionary = {}
+var _scenery_snapshot: Array = []
+var _has_planted_trees := false
+var _abode_tree_stamp := Vector3i(-1,-1,-1)
 var _rock_visibility_stamp := Vector2i(-1,-1)
 var _rock_visibility := PackedByteArray()
+var _speed_shrine_areas: Dictionary={}
 
 
 func initialize(config: Dictionary, random: RandomNumberGenerator) -> void:
+	_state_generation+=1
 	_random = random
+	_speed_shrine_areas.clear()
+	_shrine_foundations = {}
 	var width := clampi(int(config.get("width", 34)), 20, 64)
 	_state = {"width": width, "tick": 0, "terrain_revision": 0, "belief": 80,
 		"collected": 0, "next_id": 1, "terrain": [], "followers": [], "sheep": [],
@@ -97,6 +120,7 @@ func initialize(config: Dictionary, random: RandomNumberGenerator) -> void:
 				_state["trees"].append({"x": x, "z": z, "variant": _random.randi_range(0, 2)})
 
 	if config.has("campaign_data"): _initialize_campaign(config["campaign_data"])
+	_index_shrine_foundations()
 	_index_trees()
 
 
@@ -124,6 +148,14 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 	if _state.has("opening"):
 		result["opening"]["cliff_status"]=Cliff.status(_state)
 		result["opening"]["collector_status"]=Collector.status(_state)
+		result["opening"]["capacity_status"]=Capacity.status(_state)
+		result["opening"]["speed_shrine_status"]=SpeedShrine.status(_state)
+		result["opening"]["settlement_status"]=SettlementUpgrades.status(_state)
+		result["opening"]["god_seed_status"]=GodSeed.status(self,_state)
+		result["opening"]["finger_status"]=Finger.status(_state)
+		result["opening"]["meteor_status"]=Meteor.status(_state)
+		AstariRaids.decorate_snapshot(result)
+		Swamp.decorate_snapshot(result,TICK_SECONDS)
 		var shrine_claims: Array=[]
 		for site: Dictionary in _state["progression"]["shrines"]:
 			if site.get("repaired",false) and not site["complete"] and _validate({"type":"campaign_activate_shrine","id":site["id"]})["ok"]:
@@ -149,9 +181,15 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 		var growing := Opening.supports_growth(_state["opening"]) or Opening.supports_timeline_housing(_state["opening"]) or Opening.supports_shrine_housing(_state["opening"]) or Opening.supports_discovery(_state["opening"])
 		if Opening.supports_expansion(_state["opening"]) or growing:
 			var ready: Array=[]
+			var repair_home := -1
+			var growth_options:=source_growth_options() if growing else {}
 			for home: Dictionary in _state["homes"]:
-				if _validate({"type":"sprog","home_id":home["id"]})["ok"]: ready.append(home["id"])
+				var release:=_validate({"type":"sprog","home_id":home["id"]},-1,"",growth_options)
+				if not release["ok"]: continue
+				ready.append(home["id"])
+				if repair_home<0 and release.has("shrine_plan"): repair_home=home["id"]
 			result["opening"]["sprog_homes"]=ready
+			result["opening"]["sprog_shrine_home"]=repair_home
 		if growing: result["opening"]["growth_plots"]=promised_growth_plots().duplicate(true)
 		if CampaignLeash.enabled(_state):
 			result["opening"]["leash_controls"]=_state["opening"]["definition"]["leash_rules"]
@@ -164,11 +202,16 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 	result["completed_homes"] = completed
 	result["happiness"] = mini(100, 50 + _state["sheep"].size() * 3 + completed * 5)
 	if result.has("progression"):
+		if _state.has("opening"):
+			result["progression"]["sticker_era"]=preload("res://simulation/source_era.gd").sticker_era(_state["progression"],_state["opening"]["definition"].get("era_rules",{}))
+		elif _state.has("campaign") and not _state.has("voyage"):
+			preload("res://simulation/campaign_chests.gd").describe_surfaces(self,result["progression"]["chests"])
 		result["currency_metrics"]=preload("res://simulation/hud_metrics.gd").snapshot(_state)
 		if _state.has("opening") and Opening.supports_level_card(_state["opening"]):
 			var population := int(_state["opening"]["definition"]["growth_population_card"]["population"])
 			result["currency_metrics"]["followers"]={"amount":_state["followers"].size(),"previous":0,"next":population,"progress":1.0}
 		result["tribe_happiness"]=result["progression"].get("happiness",preload("res://simulation/happiness.gd").initial(result["progression"]["rules"])).duplicate(true)
+		result["tribe_happiness"]["astari"]=clampf(float(result["tribe_happiness"]["astari"]),0,1)
 		result["happiness"]=roundi(float(result["tribe_happiness"]["player"])*100)
 		if _state.has("opening") and not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"Happiness"):
 			result.erase("tribe_happiness")
@@ -187,7 +230,12 @@ func snapshot(include_scenery: bool = true) -> Dictionary:
 
 func inspect_building(id: Variant,entity: String="home") -> Dictionary:
 	if entity==Collector.KIND: return Collector.inspect_building(_state,id)
-	var result := preload("res://simulation/building_stats.gd").inspect(_state,id,entity)
+	if entity==Capacity.KIND: return Capacity.inspect_building(self,_state,id)
+	if entity==SpeedShrine.KIND or entity=="temple":
+		var speed_shrine:=SpeedShrine.inspect_building(self,_state,id)
+		if not speed_shrine.is_empty() or entity==SpeedShrine.KIND: return speed_shrine
+	var capacity := Capacity.effects(_state,source_raw_height_at) if entity=="home" else {}
+	var result := preload("res://simulation/building_stats.gd").inspect(_state,id,entity,capacity)
 	if entity=="home" and float(result.get("next_follower_seconds",-1))>=0:
 		for home: Dictionary in _state["homes"]:
 			if int(home["id"])==id and not birth_space_available(home): result["next_follower_seconds"]=-1.0; break
@@ -235,15 +283,31 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 	var needs_mining: bool=source.has("mining_core") and (not prior.has("mining_core") or source.has("stone_abodes") and not prior.has("stone_abodes"))
 	var needs_ark: bool=source.get("ark",{}).has("sail_labels") and not prior.get("ark",{}).has("sail_labels")
 	var needs_chest_stickers: bool=source.get("source_chest_stickers",false) and not prior.get("source_chest_stickers",false)
+	var needs_pack_chests: bool=source.has("authored_pack_chests") and not prior.has("authored_pack_chests")
+	var needs_sticker_era: bool=source.has("sticker_advances") and not prior.has("sticker_advances")
+	var needs_environment: bool=source.has("environment_advances") and not prior.has("environment_advances")
+	var needs_storms: bool=source.has("storm_timing") and not prior.has("storm_timing")
 	var needs_pit: bool=source.has("pit_sacrifice") and not prior.has("pit_sacrifice")
 	var needs_rain: bool=source.has("rain") and not prior.has("rain")
 	var needs_fountain: bool=source.has("fountain") and not prior.has("fountain")
 	var needs_mud_lodge: bool=source.has("mud_lodge") and not prior.has("mud_lodge")
+	var needs_later_housing: bool=source.has("beach_lodge") and not prior.has("beach_lodge") or source.get("stone_abodes",{}).keys().any(func(id: String) -> bool: return not prior.get("stone_abodes",{}).has(id))
 	var needs_cliff: bool=source.has("cliff_sculpt") and not prior.get("cliff_sculpt",{}).has("upgrades")
+	var needs_water_sculpt: bool=source.has(WaterSculpt.KEY) and not prior.has(WaterSculpt.KEY)
+	var needs_swamp: bool=source.has(Swamp.KEY) and not prior.has(Swamp.KEY)
+	var needs_meteor: bool=source.has(Meteor.KEY) and not prior.has(Meteor.KEY)
 	var needs_rock_belief: bool=source.has("rock_belief") and not prior.has("rock_belief")
 	var needs_collector: bool=source.has("belief_collector") and not prior.has("belief_collector")
+	var needs_capacity: bool=source.has(Capacity.KIND) and not prior.has(Capacity.KIND)
+	var needs_speed_shrine: bool=source.has(SpeedShrine.KIND) and not prior.has(SpeedShrine.KIND)
+	var needs_settlement_upgrades: bool=source.has(SettlementUpgrades.KEY) and not prior.has(SettlementUpgrades.KEY)
+	var needs_god_seed: bool=source.has("god_seed") and not prior.has("god_seed")
+	var needs_finger: bool=source.has("finger_of_god") and not prior.has("finger_of_god")
+	var needs_raids: bool=source.has("astari_raids") and not prior.has("astari_raids")
+	var needs_village: bool=source.has("astari_village") and not prior.has("astari_village")
+	var needs_core_stats: bool=not prior.get("farming_core",{}).has("belief_modifier") and source.get("farming_core",{}).has("belief_modifier")
 	var needs_chest: bool=step in [7,8,9] and not prior.has("first_chest") and source.has("first_chest")
-	var adds_tutorial: bool=needs_timeline or needs_housing or needs_shrine or needs_belief or needs_discovery or needs_leash or needs_dock or needs_farming or needs_grain or needs_grain_advances or needs_mining or needs_ark or needs_chest_stickers or needs_pit or needs_rain or needs_fountain or needs_mud_lodge or needs_cliff or needs_rock_belief or needs_collector
+	var adds_tutorial: bool=needs_timeline or needs_housing or needs_shrine or needs_belief or needs_discovery or needs_leash or needs_dock or needs_farming or needs_grain or needs_grain_advances or needs_mining or needs_ark or needs_chest_stickers or needs_pack_chests or needs_sticker_era or needs_environment or needs_storms or needs_pit or needs_rain or needs_fountain or needs_mud_lodge or needs_later_housing or needs_cliff or needs_water_sculpt or needs_swamp or needs_meteor or needs_rock_belief or needs_collector or needs_capacity or needs_speed_shrine or needs_settlement_upgrades or needs_god_seed or needs_finger or needs_raids or needs_village or needs_core_stats
 	if not adds_tutorial and (opening.get("phase")!="promised_land" or not step in [3,6,7,8,9,10]): return false
 	if opening.get("handoff",{}).get("available",true) and not needs_chest and not adds_tutorial: return false
 	if prior["source_sha256"]!=source.get("source_sha256") or not source.has("growth_population_card"): return false
@@ -251,6 +315,9 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 	for id: String in prior["program"]["functions"]:
 		if prior["program"]["functions"][id]!=functions.get(id): return false
 	var definition := prior.duplicate(false)
+	if (needs_farming or needs_chest_stickers) and source.has("authored_sticker_chests"):
+		definition["authored_sticker_chests"]=Progression.canonical_numbers(source["authored_sticker_chests"])
+	if needs_pack_chests and not preload("res://simulation/authored_chests.gd").install_pack_chests(opening,definition,source): return false
 	for key: String in ["program","helpers","day_cycle","promised_steps","growth_population_card"]: definition[key]=Progression.canonical_numbers(source[key])
 	if source.has("first_chest"): definition["first_chest"]=Progression.canonical_numbers(source["first_chest"])
 	if source.has("timeline_steps"):
@@ -278,7 +345,7 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 		for key: String in ["dock_site_id","leash_rules","discovery","constants"]: definition[key]=Progression.canonical_numbers(source[key])
 		opening["globals"]["leashCount"]=source["constants"]["leashCount"]
 	if needs_farming:
-		for key: String in ["discovery","constants","farming_population_card","farming_core","housing_advances","wooden_abodes","authored_sticker_chests"]:
+		for key: String in ["discovery","constants","farming_population_card","farming_core","housing_advances","wooden_abodes"]:
 			if not source.has(key): continue
 			definition[key]=Progression.canonical_numbers(source[key])
 		for key: String in ["FARM_BELIEF_COST","JOB_FARMER","JOB_BUILDER","FIELD_TYPE"]: opening["globals"][key]=definition["constants"][key]
@@ -302,18 +369,55 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 		_state["progression"]["rules"]=Immutable.freeze(updated)
 	if needs_ark: definition["ark"]=Progression.canonical_numbers(source["ark"])
 	if needs_chest_stickers:
-		if opening.get("sticker_chests_registered",false):
+		if opening.get("sticker_chests_registered",false) and not opening.has("registered_sticker_chests"):
 			opening["registered_sticker_chests"]=prior.get("authored_sticker_chests",[]).size()
-		for key: String in ["authored_sticker_chests","source_chest_stickers","source_research_cards","source_research_stickers","sticker_selection_rules"]:
+		for key: String in ["source_chest_stickers","source_research_cards","source_research_stickers","sticker_selection_rules"]:
 			definition[key]=Progression.canonical_numbers(source[key])
+	if needs_sticker_era:
+		for key: String in ["sticker_advances","era_rules"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_environment:
+		for key: String in ["environment_advances","house_environment"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_storms:
+		for key: String in ["storm_timing","storm_chest_areas","storm_chest_rules","chest_placement_rules","chest_factory_rules","chest_stories","reward_dispatch_rules"]: definition[key]=Progression.canonical_numbers(source[key])
 	if needs_pit:
 		for key: String in ["pit_sacrifice","pit_clips","pit_beam"]: definition[key]=Progression.canonical_numbers(source[key])
 	if needs_rain: definition["rain"]=Progression.canonical_numbers(source["rain"])
 	if needs_cliff: definition["cliff_sculpt"]=Progression.canonical_numbers(source["cliff_sculpt"])
+	if needs_water_sculpt: definition[WaterSculpt.KEY]=Progression.canonical_numbers(source[WaterSculpt.KEY])
+	if needs_swamp: definition[Swamp.KEY]=Progression.canonical_numbers(source[Swamp.KEY])
+	if needs_meteor: definition[Meteor.KEY]=Progression.canonical_numbers(source[Meteor.KEY])
 	if needs_rock_belief: definition["rock_belief"]=Progression.canonical_numbers(source["rock_belief"])
 	if needs_collector: definition["belief_collector"]=Progression.canonical_numbers(source["belief_collector"])
+	if needs_capacity:
+		definition[Capacity.KIND]=Progression.canonical_numbers(source[Capacity.KIND])
+		definition["temple_membership_rules"]=Progression.canonical_numbers(source["temple_membership_rules"])
+	if needs_speed_shrine:
+		definition[SpeedShrine.KIND]=Progression.canonical_numbers(source[SpeedShrine.KIND])
+		definition["temple_membership_rules"]=Progression.canonical_numbers(source["temple_membership_rules"])
+	if needs_settlement_upgrades:
+		definition[SettlementUpgrades.KEY]=Progression.canonical_numbers(source[SettlementUpgrades.KEY])
+	if needs_god_seed:
+		definition["god_seed"]=Progression.canonical_numbers(source["god_seed"])
+		var messages: Dictionary=definition["messages"].duplicate(false)
+		for id: String in ["5701","5702"]: messages[id]=Progression.canonical_numbers(source["messages"][id])
+		definition["messages"]=messages
+	if needs_finger:
+		definition["finger_of_god"]=Progression.canonical_numbers(source["finger_of_god"])
+		var messages: Dictionary=definition["messages"].duplicate(false)
+		for id: String in ["5901","5902"]: messages[id]=Progression.canonical_numbers(source["messages"][id])
+		definition["messages"]=messages
+	if needs_raids: definition["astari_raids"]=Progression.canonical_numbers(source["astari_raids"])
+	if needs_village: definition["astari_village"]=Progression.canonical_numbers(source["astari_village"])
+	if needs_core_stats:
+		for key: String in ["farming_core","builder_core","mining_core"]:
+			if not definition.has(key) or not source.has(key): continue
+			definition[key]=definition[key].duplicate(false)
+			Farming.apply_core_environment(definition[key],source[key])
 	if needs_mud_lodge:
 		for key: String in ["mud_lodge","housing_advances"]: definition[key]=Progression.canonical_numbers(source[key])
+	if needs_later_housing:
+		for key: String in ["beach_lodge","stone_abodes","housing_advances"]:
+			if source.has(key): definition[key]=Progression.canonical_numbers(source[key])
 	if needs_fountain:
 		definition["fountain"]=Progression.canonical_numbers(source["fountain"])
 		var messages: Dictionary=definition["messages"].duplicate(false)
@@ -330,6 +434,11 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 					home["progress"]=tent_ticks
 					home["build_ticks"]=tent_ticks
 	opening["definition"]=Immutable.freeze(definition)
+	if needs_speed_shrine:
+		SpeedShrine.initialize(_state)
+		_spatial_revision+=1
+	if needs_raids: AstariRaids.recover_origin(_state)
+	if needs_village: Astari.initialize(self,_state)
 	opening["globals"].merge(definition["helpers"].duplicate(true))
 	opening["globals"]["origTimeOfDaySpeed"]=definition["day_cycle"]["configuration"]["TimeOfDaySpeed"]
 	if not opening["globals"].has("abodesInState0"): opening["globals"]["abodesInState0"]=0
@@ -339,9 +448,22 @@ func resume_opening_handoff(source: Dictionary) -> bool:
 func prepare_loaded_opening() -> void:
 	if not _state.has("opening"): return
 	var opening: Dictionary=_state["opening"]
+	Astari.initialize(self,_state)
+	for home: Dictionary in _state["homes"]:
+		if not home.get("settlement_core",false): continue
+		var settlement := Economy.settlement(_state,int(home.get("settlement_id",-1)))
+		Farming.apply_core_environment(home,Farming.core_spec(_state,settlement.get("role","")))
+	_refresh_source_abode_trees()
 	opening.erase("rain_cast")
+	opening.erase("finger_cast")
+	AstariRaids.prepare_load(_state)
+	opening["messages"]=opening["messages"].filter(func(message: Dictionary) -> bool: return not int(message["id"]) in [5901,5902])
 	if opening.get("fountain_card_open",false): opening["resume_fountain_card"]=true
-	_pending=_pending.filter(func(command: Dictionary) -> bool: return command.get("power")!=Rain.POWER and command["type"]!="campaign_rain_stop")
+	if opening.get("capacity_step",0) in [1,2]: opening["resume_capacity_card"]=true
+	if opening.has("god_seed_step"):
+		if opening["god_seed_step"]==1: opening["god_seed_step"]=2
+		opening["messages"]=opening["messages"].filter(func(message: Dictionary) -> bool: return not int(message["id"]) in [5701,5702])
+	_pending=_pending.filter(func(command: Dictionary) -> bool: return command.get("power")!=Rain.POWER and not Finger.handles(command) and not command["type"] in ["campaign_rain_stop","campaign_god_seed_select","campaign_god_seed_cancel","campaign_finger_menu"])
 	if Opening.supports_level_card(opening) and opening["promised_step"]==8: opening["resume_card_tutorial"]=true
 	if Opening.supports_timeline(opening): opening["resume_timeline"]=true
 	if opening["phase"]=="shrine" and opening["shrine_step"]==1: opening["resume_shrine_card"]=true
@@ -399,6 +521,9 @@ func height_at(x: int, z: int) -> int:
 
 
 func _index_trees() -> void:
+	_scenery_snapshot=[]
+	_has_planted_trees=false
+	_abode_tree_stamp=Vector3i(-1,-1,-1)
 	var cells := {}
 	_tree_coast={}
 	_tree_rows={}
@@ -407,6 +532,7 @@ func _index_trees() -> void:
 	for tree: Dictionary in _state["trees"]:
 		var cell := int(tree.get("cell",int(tree["z"])*int(_state["width"])+int(tree["x"])))
 		cells[cell]=int(tree["variant"])
+		_has_planted_trees=_has_planted_trees or tree.has("planted_tick")
 		if tree.has("source_y"):
 			_tree_rows[cell]=index
 			var tile := Vector2i((cell%int(_state["width"]))/32,(cell/int(_state["width"]))/32)
@@ -421,6 +547,12 @@ func _index_trees() -> void:
 	_tree_coast.make_read_only()
 
 
+func shared_trees() -> Array:
+	if not _scenery_snapshot.is_read_only():
+		_scenery_snapshot=Immutable.freeze(_state["trees"].duplicate(true))
+	return _scenery_snapshot
+
+
 func tree_at(x: int,z: int) -> bool:
 	if x<0 or z<0 or x>=int(_state["width"]) or z>=int(_state["width"]): return false
 	var cell: int = z*int(_state["width"])+x
@@ -429,8 +561,214 @@ func tree_at(x: int,z: int) -> bool:
 	return (height_at(x,z)>0 or _tree_coast.has(cell)) and _tree_cells.has(cell) and not _state.get("removed_trees",{}).has(str(cell))
 
 
+func source_tree_at_cell(cell: int) -> Dictionary:
+	var width: int=_state["width"]
+	if not _tree_rows.has(cell) or not tree_at(cell%width,cell/width): return {}
+	return _state["trees"][_tree_rows[cell]]
+
+
+func _remove_tree(cell: int,events: Array) -> void:
+	var key := str(cell)
+	_state["removed_trees"][key]=true
+	_state["vegetation_revision"]+=1
+	if _state.has("opening"):
+		_state["opening"].get("finger_fires",{}).erase(key)
+		_state["opening"].get("finger_burned",{}).erase(key)
+	var progression: Dictionary=_state.get("progression",{})
+	if not progression.is_empty() and preload("res://simulation/source_unlocks.gd").enabled(progression,"TreeRockBelief"):
+		var vegetation: Dictionary=progression["rules"].get("vegetation",{})
+		_state["belief"]+=int(vegetation.get("belief",{}).get(str(_tree_cells[cell]),0))
+	events.append({"type":"tree_removed","cell":cell})
+	if _state.has("opening") and (Opening.supports_growth(_state["opening"]) or Opening.supports_discovery(_state["opening"])):
+		var intro := Opening.new()
+		intro.configure(self,_state,events)
+		if Opening.supports_discovery(_state["opening"]): intro.discovery_hook("onTreeDestroyed",[cell])
+		else: intro.promised_hook("onTreeDestroyed",[cell])
+
+
+func _advance_finger(rock_tiles: Dictionary,events: Array) -> void:
+	var opening: Dictionary=_state["opening"]
+	var tick := int(_state["tick"])+1
+	var active: bool=opening.has("finger_cast")
+	var balance: int=_state["belief"]
+	var impact := Finger.advance(_state,tick,events)
+	if not impact.is_empty():
+		Finger.contact(self,_state,Vector2(impact["x"],impact["z"]),rock_tiles,events)
+		var cast: Dictionary=opening["finger_cast"]
+		if tick>=int(cast["until"]) or _state["belief"]<Finger.minimum(_state): Finger.stop(opening,events)
+	if active and (not opening.has("finger_cast") or balance!=_state["belief"]):
+		var intro := Opening.new()
+		intro.configure(self,_state,events)
+		intro.finger_finished()
+	var fires: Dictionary=opening.get("finger_fires",{})
+	for key: String in fires.keys():
+		if tick<int(fires[key]): continue
+		fires.erase(key)
+		if not opening.has("finger_burned"): opening["finger_burned"]={}
+		opening["finger_burned"][key]=true
+
+
+func destroy_source_abode(home: Dictionary) -> void:
+	var removed := {}
+	var before: Array=_state["homes"].duplicate()
+	_state["homes"].erase(home)
+	Economy.reconcile(_state)
+	var standing := {}
+	for remaining: Dictionary in _state["homes"]: standing[remaining["id"]]=true
+	for prior: Dictionary in before:
+		if standing.has(prior["id"]): continue
+		removed[prior["id"]]=true
+		_mark_changed_footprint(prior,Vector2i.ONE*int(prior.get("span",2)))
+	for follower: Dictionary in _state["followers"]:
+		if removed.has(follower.get("indoors_home",-1)):
+			follower.erase("indoors_home")
+			follower["state"]="idle"
+		for key: String in ["entering_home","away_home"]:
+			if removed.has(follower.get(key,-1)): follower.erase(key)
+		if removed.has(follower["job"]):
+			follower["job"]=-1
+			follower["path"]=[]
+			follower["state"]="idle"
+			follower.erase("work_x")
+			follower.erase("work_z")
+	_spatial_revision+=1
+	_plan_stamp=-1
+	_state["progression"]["revision"]+=1
+
+
+func destroy_finger_fountain(prop: Dictionary) -> void:
+	var rules: Dictionary=_state["opening"]["definition"]["fountain"]
+	_state["props"].erase(prop)
+	_mark_changed_footprint(prop,Vector2i(rules["width"],rules["depth"]))
+	_spatial_revision+=1
+	_plan_stamp=-1
+
+
+func _mark_changed_footprint(item: Dictionary,size: Vector2i) -> void:
+	if not _state.has("source_plots"): return
+	var schedule: Dictionary=_state["source_plots"]["schedule"]
+	for x: int in [int(item["x"]),int(item["x"])+size.x-1]:
+		for z: int in [int(item["z"]),int(item["z"])+size.y-1]:
+			preload("res://simulation/source_plot_schedule.gd").mark(schedule,x,z)
+
+
+func remove_follower(follower: Dictionary) -> void:
+	_state["followers"].erase(follower)
+	_state["opening"]["protected"].erase(follower["id"])
+	for home: Dictionary in _state["homes"]:
+		if home["builder"]!=follower["id"]: continue
+		home["builder"]=-1
+		for worker: Dictionary in _state["followers"]:
+			if worker["job"]==home["id"]:
+				home["builder"]=worker["id"]
+				break
+	_plan_stamp=-1
+
+
+func remove_astari_performer(follower: Dictionary) -> void:
+	var village: Dictionary=_state["astari_village"]
+	if not village["performers"].has(follower): return
+	village["performers"].erase(follower)
+	for home: Dictionary in village["homes"]:
+		if home["id"]==follower["home"]:
+			home["residents"]-=1
+			break
+
+
+func break_finger_rock(cell: int,rock: Dictionary,tiles: Dictionary,events: Array) -> void:
+	var intro := Opening.new()
+	intro.configure(self,_state,events)
+	intro.remove_rock(cell,false)
+	_mark_changed_footprint({"x":rock["origin_x"],"z":rock["origin_z"]},Vector2i(rock["size_x"],rock["size_z"]))
+	var rules := Finger.rules_for(_state)
+	var at := Vector2(rock["x"],rock["z"])
+	var surface: float=_state.get("rock_motion",{}).get("heights",{}).get(str(cell),float(rock.get("source_y",0))+float(rules["sea_height"]))
+	var raw_height := surface/preload("res://simulation/source_terrain.gd").HEIGHT_SCALE
+	if raw_height<=float(rules["rock_raise_threshold"]): return
+	var radius: float=rules["rock_raise_radius"]
+	var width: int=_state["width"]
+	var changed := false
+	for z in range(maxi(0,floori(at.y-radius)),mini(width,ceili(at.y+radius)+1)):
+		for x in range(maxi(0,floori(at.x-radius)),mini(width,ceili(at.x+radius)+1)):
+			if at.distance_squared_to(Vector2(x,z))>=radius*radius or _occupied(x,z): continue
+			var height := height_at(x,z)
+			var next := mini(MAX_HEIGHT,int(minf(float(height+19)+float(rules["rock_raise_height"]),raw_height+float(rules["rock_raise_height"])))-19)
+			if next<=height: continue
+			if height==0: _dry_land+=1
+			var index := z*width+x
+			_state["terrain"][index]=next
+			_dirty_rock_tiles(tiles,index)
+			changed=true
+	if changed:
+		_state["terrain_revision"]+=1
+		_recover_agents()
+
+
 func source_tree_target(tree: Dictionary) -> float:
 	return preload("res://simulation/source_terrain.gd").surface_height(source_raw_height_at(float(tree["x"]),float(tree["z"])))
+
+
+func source_seed_slot_available(x: int,z: int) -> bool:
+	var cell := z*int(_state["width"])+x
+	if _tree_cells.has(cell):
+		if not _tree_rows.has(cell) or not _state["removed_trees"].has(str(cell)): return false
+	elif _state["trees"].size()>=65536:
+		return false
+	if _occupied(x,z) or not plot_obstruction(x,z).is_empty(): return false
+	for site: Dictionary in _state["progression"]["shrines"]:
+		if source_shrine_bounds(site).has_point(Vector2i(x,z)): return false
+	return true
+
+
+func _plant_source_tree(plan: Dictionary) -> void:
+	var tree := GodSeed.tree(self,_state,plan,_random)
+	var cell: int=tree["cell"]
+	if _tree_rows.has(cell): _state["trees"][_tree_rows[cell]]=tree
+	else: _state["trees"].append(tree)
+	_state["removed_trees"].erase(str(cell))
+	_state["tree_taps"].erase(str(cell))
+	if _state.has("tree_response") and _state["tree_response"]["entries"].erase(str(cell)):
+		_state["tree_response"]["revision"]+=1
+	if _state.has("source_plots"):
+		preload("res://simulation/source_plot_schedule.gd").mark(_state["source_plots"]["schedule"],int(tree["x"]),int(tree["z"]))
+	_state["vegetation_revision"]+=1
+	_plan_stamp=-1
+	_index_trees()
+
+
+func _refresh_source_abode_trees() -> void:
+	var progression: Dictionary=_state["progression"]
+	var unlocks:=preload("res://simulation/source_unlocks.gd")
+	var holy_forest := _has_planted_trees
+	if not holy_forest and not unlocks.enabled(progression,"TreeBuff_1") and not unlocks.enabled(progression,"TreeBuff_2"): return
+	var stamp:=Vector3i(_state["terrain_revision"],_state["vegetation_revision"],_state["homes"].size())
+	if stamp==_abode_tree_stamp: return
+	_abode_tree_stamp=stamp
+	for home: Dictionary in _state["homes"]:
+		var kind: String=home.get("kind","")
+		if not (kind=="" and (home.has("source_house") or home.get("settlement_core",false)) or holy_forest and kind in ["farm","mine"]): continue
+		var radius:=float(home.get("vision_radius",0))
+		if not preload("res://simulation/source_house_surroundings.gd").valid_radius(radius): continue
+		var center:=Vector2(home.get("anchor_x",home["x"]),home.get("anchor_z",home["z"]))
+		var counts:=_count_abode_trees(center,radius)
+		if kind=="": home["nearby_trees"]=counts.x
+		if holy_forest: home["nearby_seed_trees"]=counts.y
+
+
+func _count_abode_trees(center: Vector2,radius: float) -> Vector2i:
+	var count:=Vector2i.ZERO
+	var lower:=Vector2i(((center-Vector2.ONE*radius)/32.0).floor())
+	var upper:=Vector2i(((center+Vector2.ONE*radius)/32.0).floor())
+	var width: int=_state["width"]
+	for tile_z in range(lower.y,upper.y+1):
+		for tile_x in range(lower.x,upper.x+1):
+			for cell: int in _tree_tiles.get(Vector2i(tile_x,tile_z),[]):
+				var tree: Dictionary=_state["trees"][_tree_rows[cell]]
+				if center.distance_squared_to(Vector2(tree["x"],tree["z"]))>=radius*radius: continue
+				if not tree_at(cell%width,cell/width): continue
+				if tree.has("planted_tick"): count.y+=1
+				else: count.x+=1
+	return count
 
 
 func plot_obstruction(x: int,z: int) -> String:
@@ -442,6 +780,15 @@ func plot_obstruction(x: int,z: int) -> String:
 	if cell>=0 and cell<rocks.size() and int(rocks[cell])>0 and height_at(x,z)>0 and (not _state.has("rock_heights") or int(_state["rock_heights"][cell])==height_at(x,z)):
 		if int(_state.get("progression",{}).get("rock_taps",{}).get(str(cell),0))<int(_state.get("progression",{}).get("rules",{}).get("config",{}).get("tapsToDestroyRock",2)): return "rock"
 	return ""
+
+
+func chest_site_clear(x: int,z: int,padding: int) -> bool:
+	var width: int=_state["width"]
+	if x<0 or z<0 or x>=width or z>=width: return false
+	for dz in range(maxi(0,z-padding),mini(width,z+padding+1)):
+		for dx in range(maxi(0,x-padding),mini(width,x+padding+1)):
+			if plot_obstruction(dx,dz)!="" or _occupied(dx,dz): return false
+	return true
 
 
 func source_plot_capacity(x: int,z: int,limit: int=16) -> int:
@@ -465,12 +812,25 @@ func source_plot_band(x: int,z: int) -> int:
 
 func source_raw_height_at(x: float,z: float) -> int:
 	if not _state.has("opening"): return -1
+	return preload("res://simulation/source_terrain.gd").raw_at(source_raw_vertex,int(_state["width"]),x,z)
+
+
+func source_raw_vertex(x: int,z: int) -> int:
 	var intro: Dictionary=_state["opening"]
-	var vertex := func(px: int,pz: int) -> int:
-		var cell := pz*int(_state["width"])+px
-		var height := int(_state["terrain"][cell])
-		return height+19 if height>0 else int(intro["submerged_levels"].get(str(cell),intro["definition"]["raw_floor"][cell]))
-	return preload("res://simulation/source_terrain.gd").raw_at(vertex,int(_state["width"]),x,z)
+	var cell := z*int(_state["width"])+x
+	var height := int(_state["terrain"][cell])
+	return height+19 if height>0 else int(intro["submerged_levels"].get(str(cell),intro["definition"]["raw_floor"][cell]))
+
+
+func sculpt_height_at(x: int,z: int) -> int:
+	var height:=height_at(x,z)
+	if height>0 or WaterSculpt.rules_for(_state).is_empty(): return height
+	if x<0 or z<0 or x>=int(_state["width"]) or z>=int(_state["width"]): return height
+	return source_raw_vertex(x,z)-19
+
+
+func sculpt_minimum_layer() -> int:
+	return WaterSculpt.minimum_layer(_state)
 
 
 func source_step_at(x: float,z: float) -> float:
@@ -494,6 +854,32 @@ func _dirty_rock_tiles(tiles: Dictionary,cell: int) -> void:
 	# 32-cell regions owning those quads, including a neighboring tile at seams.
 	for pz in range(maxi(0,z-1),mini(width-1,z+1)):
 		for px in range(maxi(0,x-1),mini(width-1,x+1)): tiles[Vector2i(px/32,pz/32)]=true
+
+
+func apply_layer_edits(edits: Array,rock_tiles: Dictionary,sculpted: bool) -> void:
+	var opening: Dictionary=_state.get("opening",{})
+	var land_changed:=false
+	var depth_changed:=false
+	for edit: Dictionary in edits:
+		var cell: int=edit["cell"]
+		var before:=int(_state["terrain"][cell])
+		var height: int=edit["height"]
+		_dirty_rock_tiles(rock_tiles,cell)
+		if not opening.is_empty():
+			if sculpted: Swamp.sculpt(_state,cell,_random)
+			if height==0:
+				opening["submerged_levels"][str(cell)]=int(edit.get("raw_height",19))
+				depth_changed=true
+		if before==height: continue
+		if before==0: _dry_land+=1
+		elif height==0: _dry_land-=1
+		_state["terrain"][cell]=height
+		land_changed=true
+		if sculpted: _state["sculpted"]+=1
+	if depth_changed: opening["bathymetry_revision"]=int(opening.get("bathymetry_revision",0))+1
+	if land_changed:
+		_state["terrain_revision"]+=1
+		_recover_agents()
 
 
 func source_house_for_plot(x: int,z: int,size: int,kind: int=0) -> Dictionary:
@@ -569,7 +955,7 @@ func _source_fresh_plot_region(tile: Vector2i) -> bool:
 func _source_plot_field_at(x: int,z: int,biomes: int) -> Dictionary:
 	var height := height_at(x,z)
 	var flat := x>=0 and z>=0 and x<1023 and z<1023 and height>0 and height_at(x+1,z)==height and height_at(x,z+1)==height and height_at(x+1,z+1)==height
-	return {"flat":flat,"scenery":plot_obstruction(x,z)!="","blocked":_occupied(x,z),
+	return {"flat":flat,"scenery":plot_obstruction(x,z)!="","blocked":_occupied(x,z) or Swamp.active_at(_state,x,z),
 		"map_byte":preload("res://simulation/source_plot_field.gd").at(_state["opening"]["definition"]["plot_field"],x,z),
 		"blight":preload("res://simulation/source_map_fields.gd").read(_state["source_influence"]["raster"],5,x,z),
 		"biome_allowed":(biomes&(1<<source_biome_at(x,z)))!=0,"eligible":_source_fresh_plot_cell(x,z,biomes)}
@@ -592,8 +978,19 @@ func _advance_source_plots() -> void:
 		return cache[key]
 	var loaded := func(x: int,z: int) -> bool: return x>=0 and z>=0 and x<1024 and z<1024
 	var height := func(x: int,z: int) -> float: return preload("res://simulation/source_terrain.gd").surface_height(height_at(x,z)+19)
-	var eligible := func(x: int,z: int) -> bool: return _source_fresh_plot_cell(x,z,int(limits["biomes"]))
-	registry.maintain(state,rules,limits,fields,loaded,source_plot_band,height,-1,eligible,_source_fresh_plot_region)
+	var eligible_cells := {}
+	var eligible := func(x: int,z: int) -> bool:
+		var key := z*1024+x
+		if not eligible_cells.has(key): eligible_cells[key]=_source_fresh_plot_cell(x,z,int(limits["biomes"]))
+		return eligible_cells[key]
+	var clear_sizes := {}
+	var obstructed := func(x: int,z: int) -> bool: return _occupied(x,z) or plot_obstruction(x,z)!="" or Swamp.active_at(_state,x,z)
+	var capacity := func(x: int,z: int) -> int:
+		var key := z*1024+x
+		if not clear_sizes.has(key):
+			clear_sizes[key]=preload("res://simulation/source_plots.gd").capacity(_state["terrain"],1024,x,z,obstructed,int(limits["maximum"]))
+		return clear_sizes[key]
+	registry.maintain(state,rules,limits,fields,loaded,source_plot_band,height,-1,eligible,_source_fresh_plot_region,capacity)
 
 
 func _advance_source_influence(events: Array) -> void:
@@ -610,22 +1007,53 @@ func _occupied(x: int, z: int, ignore_home: int = -1) -> bool:
 	return owner != -1 and owner != ignore_home
 
 
+func _index_shrine_foundations() -> void:
+	# Sculpting preserves the original foundation while allowing excavation
+	# above it. A shrine's navigation footprint can be smaller than its base.
+	var foundations := {}
+	var width := int(_state["width"])
+	var bounds := Rect2i(0, 0, width, width)
+	var sea_level := int(_state.get("source_map", {}).get("sea_level", 19))
+	for site: Dictionary in _state.get("progression", {}).get("shrines", []):
+		if str(site.get("model_id", "")).is_empty(): continue
+		if site.get("source_height") == null and not _state.has("opening"): continue
+		var floor_height := source_shrine_layer(site) - sea_level
+		var area := TempleRules.footprint(site).intersection(bounds)
+		for z in range(area.position.y, area.end.y):
+			for x in range(area.position.x, area.end.x):
+				var cell := Vector2i(x, z)
+				foundations[cell] = maxi(floor_height, int(foundations.get(cell, floor_height)))
+	foundations.make_read_only()
+	_shrine_foundations = foundations
+
+
+func _supported_retraction(x: int, z: int, before: int, target: int) -> int:
+	var totem: Dictionary = _state.get("progression", {}).get("totem", {})
+	if totem.get("active", false) and totem.get("x") == x and totem.get("z") == z:
+		return before
+	var foundation: int = _shrine_foundations.get(Vector2i(x, z), target)
+	return maxi(target, mini(before, foundation))
+
+
 func refresh_spatial() -> void:
 	var stamp := Vector2i(_state["terrain_revision"],_spatial_revision)
 	if stamp == _blocked_stamp: return
 	_blocked_stamp=stamp
 	_blocked_cells.clear()
-	for home: Dictionary in _state["homes"]:
-		for dz in range(int(home.get("span",2))):
+	_plot_reachability.clear()
+	for home: Dictionary in _state["homes"]+Astari.homes(_state):
+		for dz in range(int(home.get("depth",home.get("span",2)))):
 			for dx in range(int(home.get("span",2))): _blocked_cells[Vector2i(home["x"]+dx,home["z"]+dz)]=home["id"]
 	if _state.has("opening"):
 		for prop: Dictionary in _state["props"]:
 			var kind: String=prop.get("kind","")
-			if not kind in ["fountain",Collector.KIND]: continue
+			if not kind in ["fountain",Collector.KIND,Capacity.KIND,SpeedShrine.KIND]: continue
 			var rules: Dictionary=_state["opening"]["definition"][kind]
 			var area:=Rect2i(prop["x"],prop["z"],rules["width"],rules["depth"])
 			for z in range(area.position.y,area.end.y):
 				for x in range(area.position.x,area.end.x): _blocked_cells[Vector2i(x,z)]=prop["id"]
+		for site: Dictionary in SpeedShrine.authored(_state):
+			_blocked_cells[Vector2i(site["x"],site["z"])]=-1-int(site["id"])
 
 
 func _completed_homes() -> int:
@@ -636,8 +1064,9 @@ func _completed_homes() -> int:
 	return count
 
 
-func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect2i=Rect2i()) -> Array:
+func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect2i=Rect2i(),max_steps: int=1,max_distance: int=0) -> Array:
 	if start==target or height_at(target.x,target.y)<=0: return []
+	if max_distance>0 and (target-start).length_squared()>max_distance*max_distance: return []
 	# This is a derived cache. A fresh search follows exactly the same neighbor
 	# order and finds the same routes after restoring a save without the cache.
 	var stamp := hash(Vector2i(_state["terrain_revision"],_spatial_revision))
@@ -648,11 +1077,12 @@ func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect
 	refresh_spatial()
 	var masking := avoid.has_area()
 	if masking and avoid.has_point(target) or _blocked_cells.has(target) and _blocked_cells[target]!=ignore_home: return []
-	var policy: Variant=[ignore_home,avoid] if masking else ignore_home
-	if not _component_of.has(policy): _component_of[policy]={}
-	var components: Dictionary = _component_of[policy]
+	var custom := masking or max_steps!=1 or max_distance>0
+	var policy: Variant=[ignore_home,avoid,max_steps,max_distance] if custom else ignore_home
+	if max_distance==0 and not _component_of.has(policy): _component_of[policy]={}
+	var components: Dictionary = _component_of.get(policy,{})
 	if components.has(start) and components.get(target,-1)!=components[start]: return []
-	var key: Variant=[start,policy] if masking else Vector3i(start.x,start.y,ignore_home)
+	var key: Variant=[start,policy] if custom else Vector3i(start.x,start.y,ignore_home)
 	if not _route_cache.has(key):
 		if _route_cache.size()>=12: _route_cache.erase(_route_cache.keys()[0])
 		_route_cache[key]={"frontier":[start],"previous":{start:start},"cursor":0}
@@ -665,12 +1095,14 @@ func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect
 		for direction: Vector2i in DIRECTIONS:
 			var next := current+direction
 			if previous.has(next) or masking and avoid.has_point(next) or height_at(next.x,next.y)<=0 or (_blocked_cells.has(next) and _blocked_cells[next]!=ignore_home): continue
-			if absi(height_at(current.x,current.y)-height_at(next.x,next.y))>1: continue
+			if absi(height_at(current.x,current.y)-height_at(next.x,next.y))>max_steps: continue
+			if max_distance>0 and (next-start).length_squared()>max_distance*max_distance: continue
 			previous[next]=current
 			frontier.append(next)
 	if not previous.has(target):
-		var component: int = components.size()
-		for cell: Vector2i in previous: components[cell]=component
+		if max_distance==0:
+			var component: int = components.size()
+			for cell: Vector2i in previous: components[cell]=component
 		return []
 	var path: Array = []
 	var position := target
@@ -678,6 +1110,38 @@ func _route(start: Vector2i, target: Vector2i, ignore_home: int = -1,avoid: Rect
 		path.push_front(position.y*int(_state["width"])+position.x)
 		position=previous[position]
 	return path
+
+
+func raid_route_revision() -> Array:
+	return [_state["terrain_revision"],_state["homes"].size()]
+
+
+func raid_step_valid(agent: Dictionary,max_steps: int) -> bool:
+	var cell: int=agent["path"][0]
+	var width: int=_state["width"]
+	var destination:=Vector2i(cell%width,cell/width)
+	var current:=height_at(roundi(agent["x"]),roundi(agent["z"]))
+	var next:=height_at(destination.x,destination.y)
+	return current>0 and next>0 and absi(next-current)<=max_steps and not _occupied(destination.x,destination.y)
+
+
+func raid_route(start: Vector2i,goal: Vector2,settlement_id: int,rules: Dictionary) -> Dictionary:
+	var radius: float=rules["scout_range"][1]
+	for home: Dictionary in _state["homes"]:
+		if home["id"]==settlement_id:
+			# Search to the edge of the occupied footprint on the tile grid.
+			radius+=float(home.get("span",2))*0.5
+			break
+	var candidates: Array[Vector2i]=[]
+	for z in range(floori(goal.y-radius),ceili(goal.y+radius)+1):
+		for x in range(floori(goal.x-radius),ceili(goal.x+radius)+1):
+			if goal.distance_squared_to(Vector2(x,z))>radius*radius or height_at(x,z)<=0 or _occupied(x,z): continue
+			candidates.append(Vector2i(x,z))
+	candidates.sort_custom(func(a: Vector2i,b: Vector2i) -> bool: return goal.distance_squared_to(Vector2(a))<goal.distance_squared_to(Vector2(b)))
+	for target: Vector2i in candidates:
+		var path:=_route(start,target,-1,Rect2i(),int(rules["max_steps"]),int(rules["nav_range"]))
+		if start==target or not path.is_empty(): return {"path":path}
+	return {}
 
 
 func inspect(command: Dictionary) -> Dictionary:
@@ -694,18 +1158,21 @@ func find_edge(x: float, z: float, layer: int, cliff: bool=false) -> Dictionary:
 	if not can_act_at(x,z): return best
 	var cap:=Cliff.layers(_state) if cliff else 0
 	if cliff and cap==0: return best
+	var minimum:=sculpt_minimum_layer()
 	var nearest := 6.25
 	for dz in range(-3, 4):
 		for dx in range(-3, 4):
 			var cell := Vector2i(roundi(x) + dx, roundi(z) + dz)
 			if not can_act_at(cell.x,cell.y): continue
-			var high:=mini(MAX_HEIGHT,height_at(cell.x,cell.y))
+			var high:=mini(MAX_HEIGHT,sculpt_height_at(cell.x,cell.y))
 			var chosen_layer:=0
 			var chosen_normal:=Vector2i.ZERO
 			var cell_distance:=nearest
 			for normal: Vector2i in DIRECTIONS:
-				var low:=height_at(cell.x+normal.x,cell.y+normal.y)
-				var candidate_layer:=mini(high,low+cap) if cliff else (low+1 if layer==0 else layer)
+				var low:=sculpt_height_at(cell.x+normal.x,cell.y+normal.y)
+				if low<minimum: continue
+				var first_layer:=maxi(low,0)+1 if high>0 else low+1
+				var candidate_layer:=mini(high,low+cap) if cliff else (first_layer if layer==0 else layer)
 				if candidate_layer<=low or candidate_layer>high: continue
 				var score:=Vector2(x,z).distance_squared_to(Vector2(cell)+Vector2(normal)*0.5)
 				# Preserve the tie order of ascending layers within each cell.
@@ -713,7 +1180,7 @@ func find_edge(x: float, z: float, layer: int, cliff: bool=false) -> Dictionary:
 					cell_distance=score
 					chosen_layer=candidate_layer
 					chosen_normal=normal
-			if chosen_layer>0:
+			if chosen_normal!=Vector2i.ZERO:
 				nearest=cell_distance
 				best={"ok":true,"x":cell.x,"z":cell.y,"nx":chosen_normal.x,"nz":chosen_normal.y,"layer":chosen_layer}
 	return best.duplicate(true)
@@ -727,14 +1194,17 @@ func _validate_drag(command: Dictionary) -> Dictionary:
 	var layer := int(command.get("layer", 0))
 	var distance := clampi(int(command.get("distance", 0)), -12, 12)
 	var radius := clampi(int(command.get("radius", 1)), 0, 2)
-	var high:=height_at(x,z)
-	var low:=height_at(x+nx,z+nz)
+	var high:=sculpt_height_at(x,z)
+	var low:=sculpt_height_at(x+nx,z+nz)
+	var minimum:=sculpt_minimum_layer()
 	var cliff: bool=command.get("power")==Cliff.POWER
 	var cap:=Cliff.layers(_state) if cliff else 0
 	if command.has("power") and cap==0:
 		return {"ok":false,"reason":"Cliff Sculpting is locked.","cost":0}
-	if absi(nx) + absi(nz) != 1 or layer < 1 or layer > MAX_HEIGHT or high < layer or low >= layer or cliff and layer!=mini(high,low+cap):
+	if absi(nx) + absi(nz) != 1 or not command.has("layer") or layer <= minimum or layer > MAX_HEIGHT or high < layer or low >= layer or cliff and layer!=mini(high,low+cap):
 		return {"ok": false, "reason": "Grab an exposed edge of this layer.", "cost": 0}
+	if low<minimum:
+		return {"ok":false,"reason":"Complete Sculpt the Oceans to reach deeper water.","cost":0}
 	if distance == 0:
 		return {"ok": false, "reason": "Drag outward to extend this layer; inward to retract it.", "cost": 0}
 	var dx := clampi(int(command.get("dx", nx * distance)), -12, 12)
@@ -751,33 +1221,49 @@ func _validate_drag(command: Dictionary) -> Dictionary:
 		sweep.append(cell)
 		previous = cell
 	var changes: Dictionary = {}
+	var support_limited := false
 	for cell: Vector2i in sweep:
 		for across in range(-radius, radius + 1):
 			var px := cell.x - nz * across
 			var pz := cell.y + nx * across
 			if px < 1 or pz < 1 or px >= _state["width"] - 1 or pz >= _state["width"] - 1:
 				return {"ok": false, "reason": "Keep the drag inside the world boundary.", "cost": 0}
-			var old := height_at(px, pz)
+			var old := sculpt_height_at(px, pz)
 			var height := maxi(old, layer) if distance > 0 else mini(old, layer - 1)
 			if cliff: height=Cliff.target(old,high,low,cap,distance>0)
+			if height < old:
+				var supported := _supported_retraction(px, pz, old, height)
+				support_limited = support_limited or supported > height
+				height = supported
 			if height == old:
 				continue
+			if mini(height,old)<minimum:
+				return {"ok":false,"reason":"Complete Sculpt the Oceans to reach deeper water.","cost":0}
 			if _occupied(px, pz):
 				return {"ok": false, "reason": "A home occupies this land. Drag around its plot.", "cost": 0}
 			changes[pz * int(_state["width"]) + px] = height
 	var edits: Array = []
 	var units := 0.0
 	var cliff_rules: Dictionary=_state["opening"]["definition"]["cliff_sculpt"] if cliff else {}
+	var water_rules:=WaterSculpt.rules_for(_state)
+	var width:=int(_state["width"])
 	for cell: int in changes:
-		if not can_act_at(cell%int(_state["width"]),cell/int(_state["width"])): return {"ok":false,"cost":0,"reason":""}
-		if _state.has("opening") and (Opening.supports_first_plot(_state["opening"]) or Opening.supports_expansion(_state["opening"])) and not Opening.inside_plot_sculpt_lock(_state["opening"],cell%int(_state["width"]),cell/int(_state["width"])): return {"ok":false,"cost":0,"reason":""}
-		edits.append({"cell": cell, "height": changes[cell]})
-		var change:=absi(int(changes[cell])-int(_state["terrain"][cell]))
-		units+=Cliff.belief_units(change,cliff_rules) if cliff else float(change)
+		var px:=cell%width
+		var pz:=cell/width
+		if not can_act_at(px,pz): return {"ok":false,"cost":0,"reason":""}
+		if _state.has("opening") and (Opening.supports_first_plot(_state["opening"]) or Opening.supports_expansion(_state["opening"])) and not Opening.inside_plot_sculpt_lock(_state["opening"],px,pz): return {"ok":false,"cost":0,"reason":""}
+		var before:=sculpt_height_at(px,pz)
+		var after:=int(changes[cell])
+		var edit:={"cell":cell,"height":maxi(after,0)}
+		if after<0: edit["raw_height"]=after+19
+		edits.append(edit)
+		var change:=absi(after-before)
+		if not water_rules.is_empty() and mini(before,after)<0: units+=WaterSculpt.cost(before+19,after+19,water_rules)
+		else: units+=Cliff.belief_units(change,cliff_rules) if cliff else float(change)
 	var cost:=ceili(units*runtime_value("sculpt_cost",1.0))
 	if _state.has("opening"): cost=Opening.sculpt_cost(_state,edits,cost)
 	if edits.is_empty():
-		return {"ok": false, "reason": "This drag does not change the selected layer.", "cost": 0}
+		return {"ok": false, "reason": SCULPT_SUPPORT_REASON if support_limited else "This drag does not change the selected layer.", "cost": 0}
 	var dry := _dry_land
 	for home: Dictionary in _state["homes"]:
 		# Occupied plots cannot serve as the last refuge for mobile agents.
@@ -818,8 +1304,9 @@ func _sculpt_context(command: Dictionary,edits: Array) -> Dictionary:
 	for edit: Dictionary in edits:
 		var cell: int=edit["cell"]
 		var previous := source_raw_height_at(cell%int(_state["width"]),cell/int(_state["width"]))
-		first=mini(first,mini(previous,int(edit["height"])+19))
-		last=maxi(last,maxi(previous,int(edit["height"])+19))
+		var after:=int(edit.get("raw_height",int(edit["height"])+19))
+		first=mini(first,mini(previous,after))
+		last=maxi(last,maxi(previous,after))
 	return {"layers":[first,last],"position":[x,z,preload("res://simulation/source_terrain.gd").surface_height(old)]}
 
 
@@ -843,7 +1330,7 @@ func inspect_source_settlement(opening: Dictionary,command: Dictionary,power: St
 	return reject
 
 
-func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String = "") -> Dictionary:
+func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String = "",growth_options: Dictionary={}) -> Dictionary:
 	var kind: String = str(command.get("type", ""))
 	if _state.has("leash_lesson"): return LeashLesson.inspect(self,_state,command)
 	if kind=="weyworld_release_ark": return inspect_ark_release(command.get("id"))
@@ -852,6 +1339,11 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 		if kind=="campaign_ack": return {"ok":command.get("id") in _state["weyworld"]["hints"] and int(command.get("id"))>=5803,"cost":0,"reason":""}
 	if _state.has("opening"):
 		if kind=="campaign_view": return {"ok":Opening.valid_observation(command),"cost":0,"reason":""}
+		if Finger.handles(command):
+			if Opening.supports_discovery(_state["opening"]): return Finger.inspect(_state,command)
+			return {"ok":false,"cost":0,"reason":""}
+		if kind=="campaign_finger_menu":
+			return {"ok":not Finger.rules_for(_state).is_empty() and command.get("show") is bool,"cost":0,"reason":""}
 		if kind=="collect" and command.get("gesture")=="drag" and not preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"BeliefLeashing"):
 			return {"ok":false,"cost":0,"reason":""}
 		if kind=="campaign_ack":
@@ -871,11 +1363,29 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 			if opening.get("leash_mission_pending",false): return {"ok":kind=="campaign_leash_lesson_completed","cost":0,"reason":""}
 			if kind=="campaign_rain_stop": return {"ok":true,"cost":0,"reason":""}
 			if kind=="campaign_cliff_upgrade": return Cliff.inspect_upgrade(_state,command.get("id"))
+			if kind==SettlementUpgrades.COMMAND: return SettlementUpgrades.inspect(_state,command.get("id"))
 			if kind=="campaign_belief_collector_upgrade": return Collector.inspect_upgrade(_state,command.get("id"))
+			if kind==Capacity.UPGRADE or kind=="use_power" and command.get("power")==Capacity.POWER:
+				return Capacity.inspect(self,_state,command)
+			if kind==SpeedShrine.UPGRADE or kind=="use_power" and command.get("power")==SpeedShrine.POWER:
+				return SpeedShrine.inspect(self,_state,command)
+			if kind=="campaign_capacity_card_closed":
+				return {"ok":opening.get("capacity_step",0) in [1,2],"cost":0,"reason":""}
+			if kind=="campaign_capacity_select":
+				return {"ok":opening.get("capacity_step",0)==3 and Capacity.POWER in _state["progression"]["powers"],"cost":0,"reason":""}
+			if kind=="campaign_god_seed_upgrade": return GodSeed.inspect_upgrade(_state,command.get("id"))
+			if kind in ["campaign_god_seed_select","campaign_god_seed_cancel"]:
+				return {"ok":opening.get("god_seed_step",0)==2,"cost":0,"reason":""}
 			if kind=="use_power" and command.get("power")==Rain.POWER:
 				return Rain.inspect(self,_state,command,TICK_SECONDS)
+			if kind=="use_power" and command.get("power")==Swamp.Source.POWER:
+				return Swamp.inspect(self,_state,command)
+			if kind==Meteor.UPGRADE or kind=="use_power" and command.get("power")==Meteor.POWER:
+				return Meteor.inspect(self,_state,command)
 			if kind=="use_power" and command.get("power")==Collector.POWER:
 				return Collector.inspect_place(self,_state,command)
+			if kind=="use_power" and command.get("power")==GodSeed.POWER:
+				return GodSeed.inspect(self,_state,command)
 			if kind=="campaign_fountain_tap" or kind=="use_power" and command.get("power")==Fountain.POWER:
 				return Fountain.inspect(self,_state,command)
 			var farm_step: int=opening.get("farming_step",-1)
@@ -916,7 +1426,21 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 					return Research.inspect(_state["progression"],command)
 				if opening["definition"].has("cliff_sculpt") and command.get("card")==Cliff.CARD:
 					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has(WaterSculpt.KEY) and command.get("card")==WaterSculpt.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has(Swamp.KEY) and command.get("card")==Swamp.Source.CARD:
+					return Research.inspect(_state["progression"],command)
 				if opening["definition"].has("fountain") and command.get("card")==Fountain.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has("god_seed") and command.get("card")==GodSeed.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has("finger_of_god") and command.get("card")==Finger.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has(Capacity.KIND) and command.get("card")==Capacity.CARD:
+					return Research.inspect(_state["progression"],command)
+				if opening["definition"].has(SpeedShrine.KIND) and command.get("card")==SpeedShrine.CARD:
+					return Research.inspect(_state["progression"],command)
+				if kind=="claim_card" and command.get("card")==opening["definition"].get("ark",{}).get("card",""):
 					return Research.inspect(_state["progression"],command)
 				var rain: Dictionary=opening["definition"].get("rain",{})
 				if not rain.is_empty() and command.get("card")==rain["card"]:
@@ -926,7 +1450,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 					return Research.inspect(_state["progression"],command) if kind=="claim_card" and opening.get("superfast_step")==0 and grain["id"] in _state["progression"]["discovered"] and not grain["id"] in _state["progression"]["completed"] else {"ok":false,"cost":0,"reason":""}
 				if command.get("card")==opening["definition"].get("mining_population_card",{}).get("id"):
 					return Research.inspect(_state["progression"],command)
-				for key: String in ["housing_advances","grain_advances","ore_advances"]:
+				for key: String in ["housing_advances","sticker_advances","grain_advances","ore_advances","environment_advances"]:
 					for level: Dictionary in opening["definition"].get(key,[]):
 						if command.get("card")==level["id"]: return Research.inspect(_state["progression"],command)
 			if kind=="open_chest" and opening.has("chests"):
@@ -941,7 +1465,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 				return {"ok":opening.get("events_step")==0 and command.get("won") is bool,"cost":0,"reason":""}
 			if kind=="leash": return CampaignLeash.inspect(self,_state,command)
 			if kind=="campaign_show_level_card": return {"ok":opening.get("leash_step")==0 and not opening.get("pit_card_open",false),"cost":0,"reason":""}
-			if kind=="campaign_dismiss_level_card": return {"ok":opening.get("pit_card_open",false) or leash_card or opening.get("dock_card_open",false) or opening.get("fountain_card_open",false) or farm_step==1 or opening.get("superfast_step")==1,"cost":0,"reason":""}
+			if kind=="campaign_dismiss_level_card": return {"ok":opening.get("pit_card_open",false) or leash_card or opening.get("dock_card_open",false) or opening.get("fountain_card_open",false) or opening.get("god_seed_step",0)==1 or farm_step==1 or opening.get("superfast_step")==1,"cost":0,"reason":""}
 			if kind=="campaign_activate_shrine":
 				var site_id: Variant=command.get("id")
 				var definition: Dictionary=opening["definition"]
@@ -985,7 +1509,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 		var growing := Opening.supports_growth(_state["opening"]) or timeline_housing or shrine_housing or discovery
 		if kind=="sprog" and (Opening.supports_expansion(_state["opening"]) or growing):
 			for home: Dictionary in _state["homes"]:
-				if home["id"]==command.get("home_id") and home.get("settlement_core",false) and Economy.settlement(_state,home["settlement_id"]).get("role")!="builder":
+				if home["id"]==command.get("home_id") and home.get("settlement_core",false) and Economy.settlement(_state,int(home.get("settlement_id",-1))).get("role")!="builder":
 					return {"ok":false,"cost":0,"reason":""}
 			var ready: bool=timeline_housing or shrine_housing or discovery or _state["opening"]["promised_step"] in [4,6] and _state["opening"]["globals"].get("sprog_unlocked",false)
 			var candidate := Opening.release_candidate(_state,int(command.get("home_id",-1))) if ready else {}
@@ -994,20 +1518,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 				var shrine_plan := source_shrine_plan(candidate)
 				if not shrine_plan.is_empty(): return {"ok":true,"cost":0,"reason":"","shrine_plan":shrine_plan}
 			if ready and growing:
-				var seeking := 0
-				for follower: Dictionary in _state["followers"]:
-					if follower.get("seeking_plot",false): seeking+=1
-				var origin := Vector2i(roundi(candidate["follower"]["x"]),roundi(candidate["follower"]["z"]))
-				ready=false
-				if has_room_for_growth(seeking):
-					var reachable := 0
-					for plot: Dictionary in promised_growth_plots():
-						if source_abode_wheat_cost(plot)>int(_state.get("wheat",0)): continue
-						if not promised_plot_reachable(plot,origin): continue
-						reachable+=1
-						if reachable>seeking:
-							ready=true
-							break
+				ready=source_release_has_plot(candidate["follower"],growth_options)
 			return {"ok":ready,"cost":0,"reason":""}
 		if Opening.supports_first_chest(_state["opening"]):
 			if kind=="open_chest":
@@ -1103,6 +1614,7 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 	if kind in ["raise", "lower"]:
 		var radius := clampi(int(command.get("radius", 0)), 0, 2)
 		var cells: Array = []
+		var support_limited := false
 		for dz in range(-radius, radius + 1):
 			for dx in range(-radius, radius + 1):
 				if dx * dx + dz * dz > radius * radius:
@@ -1115,10 +1627,13 @@ func _validate(command: Dictionary, ignore_home: int = -1,ignore_shrine: String 
 				if _occupied(px, pz):
 					return {"ok": false, "reason": "Protect your homes: sculpt outside their plots.", "cost": 0}
 				var height := height_at(px, pz)
+				if kind == "lower" and height > 0 and _supported_retraction(px, pz, height, height - 1) == height:
+					support_limited = true
+					continue
 				if (kind == "raise" and height < MAX_HEIGHT) or (kind == "lower" and height > 0):
 					cells.append(pz * width + px)
 		if cells.is_empty():
-			return {"ok": false, "reason": "This land has reached its height limit.", "cost": 0}
+			return {"ok": false, "reason": SCULPT_SUPPORT_REASON if support_limited else "This land has reached its height limit.", "cost": 0}
 		var sculpt_cost := ceili(cells.size()*runtime_value("sculpt_cost",1.0))
 		return {"ok": _state["belief"] >= sculpt_cost, "reason": "Sculpt %d cells · %d belief" % [cells.size(), sculpt_cost] if _state["belief"] >= sculpt_cost else "Gather more belief to sculpt.", "cost": sculpt_cost, "cells": cells}
 	if kind in ["home","work_plot"]:
@@ -1223,11 +1738,26 @@ func step(commands: Array = []) -> Array:
 			kind=command["type"]
 		if _state.has("leash_lesson"):
 			LeashLesson.apply(self,_state,command,result,events)
+		elif _state.has("opening") and Finger.handles(command):
+			Finger.apply(self,_state,kind,result,events)
+			if kind in [Finger.ARM,Finger.CANCEL]:
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				if kind==Finger.ARM: intro.finger_armed()
+				else: intro.finger_finished()
+		elif kind=="campaign_finger_menu":
+			var intro:=Opening.new()
+			intro.configure(self,_state,events)
+			intro.finger_menu(command["show"])
 		elif _state.has("opening") and kind=="use_power" and command.get("power")==Rain.POWER:
 			_state["opening"]["rain_cast"]={"x":command["x"],"z":command["z"]}
+		elif _state.has("opening") and kind=="use_power" and command.get("power")==Swamp.Source.POWER:
+			Swamp.cast(self,_state,result,TICK_SECONDS,events)
+		elif _state.has("opening") and kind=="use_power" and command.get("power")==Meteor.POWER:
+			Meteor.cast(_state,result,events)
 		elif kind=="campaign_rain_stop":
 			_state["opening"].erase("rain_cast")
-		elif kind in ["campaign_cliff_upgrade","campaign_belief_collector_upgrade"]:
+		elif kind in ["campaign_cliff_upgrade","campaign_belief_collector_upgrade","campaign_god_seed_upgrade",Capacity.UPGRADE,SpeedShrine.UPGRADE,Meteor.UPGRADE,SettlementUpgrades.COMMAND]:
 			var p: Dictionary=_state["progression"]
 			if not p.has("script_unlocks"): p["script_unlocks"]={}
 			p["script_unlocks"][result["upgrade"]]=true
@@ -1236,6 +1766,28 @@ func step(commands: Array = []) -> Array:
 			Collector.place(_state,result,TICK_SECONDS)
 			_spatial_revision+=1
 			preload("res://simulation/source_plot_schedule.gd").mark(_state["source_plots"]["schedule"],result["x"],result["z"])
+		elif _state.has("opening") and kind=="use_power" and command.get("power") in [Capacity.POWER,SpeedShrine.POWER]:
+			var shrine_kind:=Capacity.KIND if command["power"]==Capacity.POWER else SpeedShrine.KIND
+			var shrine:=Monuments.place(_state,shrine_kind,_state["opening"]["definition"][shrine_kind],result)
+			_spatial_revision+=1
+			preload("res://simulation/source_plot_schedule.gd").mark(_state["source_plots"]["schedule"],shrine["x"],shrine["z"])
+			if shrine_kind==Capacity.KIND:
+				var intro:=Opening.new()
+				intro.configure(self,_state,events)
+				intro.capacity_shrine_placed(shrine)
+		elif kind in ["campaign_capacity_card_closed","campaign_capacity_select"]:
+			var intro:=Opening.new()
+			intro.configure(self,_state,events)
+			if kind=="campaign_capacity_card_closed": intro.close_capacity_card()
+			else: intro.clear_message(6002)
+		elif _state.has("opening") and (kind in ["campaign_god_seed_select","campaign_god_seed_cancel"] or kind=="use_power" and command.get("power")==GodSeed.POWER):
+			var intro := Opening.new()
+			intro.configure(self,_state,events)
+			if kind=="use_power":
+				_plant_source_tree(result)
+				GodSeed.raise_happiness(_state,result)
+				events.append({"type":"source_sound","event":GodSeed.rules_for(_state)["sound"]})
+			intro.god_seed_tool(kind=="campaign_god_seed_select")
 		elif _state.has("opening") and kind=="use_power" and command.get("power")==Fountain.POWER:
 			var fountain:=Fountain.place(_state,result)
 			_spatial_revision+=1
@@ -1265,18 +1817,11 @@ func step(commands: Array = []) -> Array:
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
 				intro.leash_release(command,result,true)
+				if result.has("abode_plan"): intro.discovery_hook("onAbodeBuilding",[_state["homes"].back()["id"]])
 		elif kind in ["start_voyage","voyage_power","voyage_temple","voyage_chest"]:
 			Voyage.command(self,_state,command,events)
 		elif kind == "sculpt_drag":
-			for edit: Dictionary in result["edits"]:
-				_dirty_rock_tiles(rock_tiles,int(edit["cell"]))
-				if _state.has("opening") and int(edit["height"])==0: _state["opening"]["submerged_levels"][str(edit["cell"])]=19
-				if _state["terrain"][edit["cell"]] == 0 and edit["height"] > 0: _dry_land += 1
-				elif _state["terrain"][edit["cell"]] > 0 and edit["height"] == 0: _dry_land -= 1
-				_state["terrain"][edit["cell"]] = edit["height"]
-			_state["sculpted"] += 1
-			_state["terrain_revision"] += 1
-			_recover_agents()
+			apply_layer_edits(result["edits"],rock_tiles,true)
 			if _state.has("opening"):
 				var intro := Opening.new()
 				intro.configure(self,_state,events)
@@ -1348,16 +1893,7 @@ func step(commands: Array = []) -> Array:
 			_state["tree_taps"][key]=int(_state["tree_taps"].get(key,0))+1
 			var vegetation: Dictionary = _state.get("progression",{}).get("rules",{}).get("vegetation",{})
 			if int(_state["tree_taps"][key])>=int(vegetation.get("taps_to_clear",1)):
-				_state["removed_trees"][key]=true
-				_state["vegetation_revision"]+=1
-				if _state.has("progression") and preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"TreeRockBelief"):
-					_state["belief"]+=int(vegetation.get("belief",{}).get(str(_tree_cells[cell]),0))
-				events.append({"type":"tree_removed","cell":cell})
-				if _state.has("opening") and (Opening.supports_growth(_state["opening"]) or Opening.supports_discovery(_state["opening"])):
-					var intro := Opening.new()
-					intro.configure(self,_state,events)
-					if Opening.supports_discovery(_state["opening"]): intro.discovery_hook("onTreeDestroyed",[cell])
-					else: intro.promised_hook("onTreeDestroyed",[cell])
+				_remove_tree(cell,events)
 		elif kind.begins_with("campaign_farm_"):
 			var intro:=Opening.new()
 			intro.configure(self,_state,events)
@@ -1410,6 +1946,9 @@ func step(commands: Array = []) -> Array:
 			elif kind=="campaign_dismiss_level_card" and _state["opening"].erase("fountain_card_open"):
 				_state["opening"]["persistent"]["HappinessProgress"]=5
 				intro.clear_message(5603)
+			elif kind=="campaign_dismiss_level_card" and _state["opening"].get("god_seed_step",0)==1:
+				_state["opening"]["god_seed_step"]=2
+				intro.clear_message(5701)
 			elif kind in ["campaign_show_level_card","campaign_dismiss_level_card"]: intro.level_card_action(kind=="campaign_show_level_card")
 			elif kind in ["campaign_timeline_open","campaign_timeline_close"]: intro.timeline_action(kind=="campaign_timeline_open")
 			else: intro.acknowledge(int(command["id"]))
@@ -1418,10 +1957,11 @@ func step(commands: Array = []) -> Array:
 				"x": int(command["x"]), "z": int(command["z"]), "turns": posmod(int(command.get("turns", 0)), 4)})
 			_state["next_id"] += 1
 		elif kind == "claim_card":
-			if _state.has("opening") and command["card"]==Fountain.CARD:
+			if _state.has("opening") and command["card"] in [Fountain.CARD,GodSeed.CARD]:
 				var intro:=Opening.new()
 				intro.configure(self,_state,events)
-				intro.show_fountain_card(command["card"])
+				if command["card"]==GodSeed.CARD: intro.show_god_seed_card()
+				else: intro.show_fountain_card(command["card"])
 				continue
 			elif _state.has("opening") and command["card"]=="Card_Settlement_Farming":
 				var intro:=Opening.new()
@@ -1481,6 +2021,9 @@ func step(commands: Array = []) -> Array:
 		if kind=="use_power": event["power"]=command["power"]
 		events.append(event)
 	_pending.clear()
+	if _state.has("opening") and not Finger.rules_for(_state).is_empty():
+		_advance_finger(rock_tiles,events)
+	if _state.has("opening"): Meteor.advance(self,_state,_random,TICK_SECONDS,rock_tiles,events)
 	if _state.has("tree_response") and not rock_tiles.is_empty():
 		if preload("res://simulation/source_tree_response.gd").refresh(_state,rock_tiles,_tree_tiles,_tree_rows,source_tree_target,float(_state["tick"])*TICK_SECONDS):
 			_state["vegetation_revision"]+=1
@@ -1501,23 +2044,29 @@ func step(commands: Array = []) -> Array:
 	if _state.has("opening"):
 		var intro := Opening.new()
 		intro.configure(self,_state,events)
+		Swamp.advance(self,_state,TICK_SECONDS,events)
 		_advance_source_plots()
+		var monuments: Array=_state["props"].filter(func(prop: Dictionary) -> bool: return prop.get("kind") in [Capacity.KIND,SpeedShrine.KIND])
+		monuments.append_array(SpeedShrine.authored(_state))
+		Monuments.advance(_state,monuments,source_raw_height_at,_random,TICK_SECONDS)
+		_speed_shrine_areas=SpeedShrine.movement_areas(_state,monuments,source_raw_height_at)
 		intro.advance()
+		_refresh_source_abode_trees()
 		var rain:=Rain.advance(self,_state,TICK_SECONDS)
 		if _state["opening"].get("farming_step",-1)>=4 or Farming.MINING_POWER in _state["progression"]["powers"]:
 			for follower: Dictionary in _state["followers"]:
-				if follower.has("workplace") and follower["job"]==-1: Economy.update_agent(self,_state,follower,rain)
+				if follower.has("workplace") and follower["job"]==-1 and not follower.has("swamp_entered") and int(follower.get("arrow_stun_until",0))<=int(_state["tick"]):
+					Economy.update_agent(self,_state,follower,rain)
 		if CampaignLeash.enabled(_state):
 			CampaignLeash.advance_walks(self,_state)
 			var sacrificed:=Pit.advance(self,_state,_random,TICK_SECONDS,events)
 			for id: int in sacrificed: intro.discovery_hook("onFollowerSacrificed",[id],"PitOfDoom")
-			if not sacrificed.is_empty() and _state["followers"].is_empty():
-				for start: Dictionary in _state["opening"]["definition"]["starts"]:
-					var follower:=_agent(start["x"],start["z"],false)
-					follower.merge({"rotation":start["source_args"][3],"female":start["source_args"][5]},true)
-					_state["followers"].append(follower)
+			if not sacrificed.is_empty() and _state["followers"].is_empty(): respawn_source_followers()
 		if preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],"Happiness"):
 			preload("res://simulation/happiness.gd").advance(_state["progression"],TICK_SECONDS)
+		if Opening.supports_discovery(_state["opening"]):
+			Astari.advance(self,_state,_random,events)
+			AstariRaids.advance(self,_state,_random,events)
 		preload("res://simulation/building_stats.gd").advance_belief(_state,int(_state.get("build_ticks",BUILD_TICKS)))
 		Collector.advance(_state,TICK_SECONDS,events)
 		_advance_source_influence(events)
@@ -1564,7 +2113,7 @@ func step(commands: Array = []) -> Array:
 
 
 func _update_agent(agent: Dictionary, animal: bool) -> void:
-	if agent.has("ark_passenger"): return
+	if agent.has("ark_passenger") or agent.has("swamp_entered"): return
 	if agent.has("weyworld_destination"):
 		var goal: Array=agent["weyworld_destination"]
 		var target:=Vector2i(goal[0],goal[1])
@@ -1624,13 +2173,16 @@ func _update_agent(agent: Dictionary, animal: bool) -> void:
 	advance_agent_path(agent,animal)
 
 
-func advance_agent_path(agent: Dictionary,animal: bool) -> void:
+func advance_agent_path(agent: Dictionary,animal: bool,route_speed: float=0.0,cell_offset: Vector2=Vector2.ZERO) -> void:
+	if agent.has("swamp_entered") or int(agent.get("arrow_stun_until",0))>int(_state["tick"]): return
 	if not agent["path"].is_empty():
 		var cell := int(agent["path"][0])
 		var target := Vector2(cell % _state["width"], int(cell / _state["width"]))
+		if cell_offset!=Vector2.ZERO: target=(target+cell_offset).clamp(Vector2.ZERO,Vector2.ONE*(float(_state["width"])-0.001))
 		var current := Vector2(agent["x"], agent["z"])
-		var speed := float(agent.get("leash_route_speed",0.0))
+		var speed := route_speed if route_speed>0 else float(agent.get("leash_route_speed",0.0))
 		if speed<=0.0: speed=runtime_value("sheep_speed",1.0) if animal else float(follower_values(agent).get("RouteSpeed",runtime_value("follower_speed",1.3)))
+		if not animal: speed=source_route_speed(speed,current)
 		var next := current.move_toward(target,speed*TICK_SECONDS)
 		agent["x"] = next.x
 		agent["z"] = next.y
@@ -1639,6 +2191,17 @@ func advance_agent_path(agent: Dictionary,animal: bool) -> void:
 			agent["path"].pop_front()
 			if agent["path"].is_empty():
 				agent["state"] = "idle"
+
+
+func source_route_speed(base: float,position: Vector2) -> float:
+	return base if _speed_shrine_areas.is_empty() else SpeedShrine.route_speed(base,position,_speed_shrine_areas,source_raw_height_at)
+
+
+func respawn_source_followers() -> void:
+	for start: Dictionary in _state["opening"]["definition"]["starts"]:
+		var follower:=_agent(start["x"],start["z"],false)
+		follower.merge({"rotation":start["source_args"][3],"female":start["source_args"][5]},true)
+		_state["followers"].append(follower)
 
 
 func _recover_agents() -> void:
@@ -1721,6 +2284,7 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 	for key in ["belief", "collected", "tick", "terrain_revision", "next_id", "world_seed", "sculpted"]:
 		if not (state.get(key) is int or state.get(key) is float) or float(state[key]) < 0 or not is_finite(float(state[key])):
 			return false
+	if state.has("opening") and not Finger.valid_state(state): return false
 	if not state.get("won") is bool or not data.get("pending") is Array or data["pending"].size() > 128:
 		return false
 	for command: Variant in data["pending"]:
@@ -1751,12 +2315,15 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 						var value: Variant=entry.get(field)
 						if not (value is int or value is float) or not is_finite(float(value)) or value!=int(value) or value<0: return false
 					if entry["cell"]!=int(entry["z"])*width+int(entry["x"]) or entry["anchor_height"]>MAX_HEIGHT or entry["source_y"]<=0 or not entry.get("model_id") is String: return false
+				if entry.has("planted_tick") and not GodSeed.valid_tree(entry,state): return false
 				continue
 			if not (entry.get("id") is int or entry.get("id") is float) or ids.has(int(entry["id"])) or int(entry["id"]) >= state["next_id"]:
 				return false
 			ids[int(entry["id"])] = true
 			if key == "homes":
 				if entry.has("sacrificed_followers") and not Opening.integer(entry["sacrificed_followers"],0,1000000000): return false
+				if entry.has("nearby_trees") and not Opening.integer(entry["nearby_trees"],0,65536): return false
+				if entry.has("nearby_seed_trees") and not Opening.integer(entry["nearby_seed_trees"],0,65536): return false
 				if entry.has("beauty_fraction") and not preload("res://simulation/source_house_environment.gd").valid_beauty_fraction(entry["beauty_fraction"]): return false
 				if entry.has("temple_work") and (not (entry["temple_work"] is int or entry["temple_work"] is float) or not is_finite(float(entry["temple_work"])) or float(entry["temple_work"])<0 or preload("res://simulation/source_terrain.gd").f32(float(entry["temple_work"]))!=float(entry["temple_work"])): return false
 				if entry.has("work_accumulator") and (not (entry["work_accumulator"] is int or entry["work_accumulator"] is float) or not is_finite(float(entry["work_accumulator"])) or entry["work_accumulator"]<0 or entry["work_accumulator"]>=1): return false
@@ -1791,6 +2358,8 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 					if entry.has("sacrifice_due"):
 						if entry.has("leash_goal") or not entry["state"] in Pit.CLIPS or not CampaignLeash.integer(entry["sacrifice_due"],0): return false
 					elif not entry.has("leash_goal"): return false
+	if state.has("opening") and not AstariRaids.valid_state(state,ids): return false
+	if state.has("opening") and not Astari.valid_state(state,ids): return false
 	var props: Variant = state.get("props", [])
 	if not props is Array or props.size() > 4096:
 		return false
@@ -1812,8 +2381,14 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 			if rules.is_empty() or prop["model_id"]!=rules["model"]: return false
 			if not Rect2i(0,0,width,width).encloses(Collector.bounds(prop,rules)): return false
 			if prop.has("ready_since") and not Opening.integer(prop["ready_since"],-1000000,int(state["tick"])): return false
+		if prop.get("kind") in [Capacity.KIND,SpeedShrine.KIND]:
+			var rules: Dictionary=state.get("opening",{}).get("definition",{}).get(prop["kind"],{})
+			if rules.is_empty() or prop["model_id"]!=rules["model"]: return false
+			if not Rect2i(0,0,width,width).encloses(Monuments.bounds(prop,rules)) or not Monuments.valid_affiliation(prop): return false
 		ids[int(prop["id"])] = true
 	if state.has("progression") and not Progression.valid(state["progression"],width): return false
+	for site: Dictionary in SpeedShrine.authored(state):
+		if not site.get("complete",false) or not Monuments.valid_affiliation(site): return false
 	if state.has("progression") and not Economy.valid_world(state): return false
 	for field: String in ["removed_trees","tree_taps"]:
 		if not state.get(field,{}) is Dictionary: return false
@@ -1844,7 +2419,9 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 	_blocked_cells.clear()
 	_plan_stamp=-1
 	_navigation_stamp=0
+	_speed_shrine_areas.clear()
 	_state = state.duplicate(true)
+	_state_generation+=1
 	_rock_visibility_stamp=Vector2i(-1,-1)
 	_index_trees()
 	# Earlier builds hid scenery under houses without persisting the clearing.
@@ -1928,6 +2505,7 @@ func restore(data: Dictionary, random: RandomNumberGenerator) -> bool:
 	_random.state = int(data["rng_state"])
 	if _state.has("progression"): Immutable.freeze(_state["progression"]["rules"])
 	if _state.has("opening"): Immutable.freeze(_state["opening"]["definition"])
+	_index_shrine_foundations()
 	return true
 
 
@@ -1990,6 +2568,7 @@ func _initialize_campaign(config: Dictionary) -> void:
 		Immutable.freeze(_state["progression"]["rules"])
 	if config.has("story"):
 		_state["opening"]=Opening.initialize(config["story"])
+		SpeedShrine.initialize(_state)
 		if preload("res://simulation/source_influence_areas.gd").valid_rules(config["story"].get("influence_rules",{})):
 			_state["source_influence"]=preload("res://simulation/source_influence_areas.gd").initial(_state["progression"]["rules"]["influence_areas"])
 			Influence.refresh(_state)
@@ -2004,6 +2583,7 @@ func _initialize_campaign(config: Dictionary) -> void:
 			agent["state"]="drowning"
 			_state["opening"]["protected"].append(int(agent["id"]))
 		Immutable.freeze(_state["opening"]["definition"])
+		Astari.initialize(self,_state)
 	if config.has("voyage"):
 		_state["voyage"]=Voyage.initialize(config["voyage"],int(config["width"]),config.get("gem_field",PackedByteArray()))
 		_state["followers"]=[]
@@ -2105,6 +2685,7 @@ func _inspect_shrine_repair(shrine: Dictionary,costs: Dictionary) -> Dictionary:
 	for z in range(region.position.y,region.end.y):
 		for x in range(region.position.x,region.end.x):
 			if x<0 or z<0 or x>=width or z>=width or not can_act_at(x,z) or height_at(x,z)>level or _occupied(x,z): return reject
+			if Swamp.active_at(_state,x,z): return {"ok":false,"cost":0,"reason":Swamp.rules_for(_state)["clear_hint"]}
 			var obstruction := plot_obstruction(x,z)
 			if not obstruction.is_empty(): return {"ok":false,"cost":0,"reason":"Clear the %s above this shrine first."%obstruction,"obstruction":{"kind":obstruction,"x":x,"z":z}}
 	var work_cells: Array[Vector2i]=[]
@@ -2182,7 +2763,8 @@ func _advance_construction() -> void:
 	# array order or charge walking builders as if they were already working.
 	var groups := {}
 	for follower: Dictionary in _state["followers"]:
-		if follower["job"]==-1 or follower["state"]!="building": continue
+		if follower["job"]==-1 or follower["state"]!="building" or follower.has("swamp_entered"): continue
+		if int(follower.get("arrow_stun_until",0))>int(_state["tick"]): continue
 		var id: int=follower["job"]
 		if not groups.has(id): groups[id]={"count":0,"skill":0.0,"workers":[]}
 		groups[id]["count"]+=1
@@ -2229,6 +2811,9 @@ func _advance_construction() -> void:
 			follower["state"]="idle"
 			follower.erase("work_x")
 			follower.erase("work_z")
+			if home.has("source_house") and follower.has("away_home") and not follower.has("entering_home"):
+				follower["entering_home"]=follower["away_home"]
+				follower["path"]=[]
 
 
 func source_shrine_site(id: String="") -> Dictionary:
@@ -2387,6 +2972,11 @@ func source_shrine_clear(site: Dictionary,ignore_home: int=-1) -> bool:
 	if site.is_empty(): return false
 	var anchor := Vector2i(site["x"],site["z"])
 	if not can_act_at(anchor.x,anchor.y) or _occupied(anchor.x,anchor.y,ignore_home) or not plot_obstruction(anchor.x,anchor.y).is_empty(): return false
+	if not _state["opening"].get(Swamp.KEY,{}).get("active",{}).is_empty():
+		var area:=source_shrine_bounds(site)
+		for z in range(area.position.y,area.end.y):
+			for x in range(area.position.x,area.end.x):
+				if Swamp.active_at(_state,x,z): return false
 	var terrain := preload("res://simulation/source_terrain.gd")
 	var footprint := {"x":float(site["x"]),"z":float(site["z"]),"height":terrain.surface_height(source_shrine_layer(site)),"footprint_width":int(site["width"])}
 	return preload("res://simulation/source_temple_footprint.gd").count(footprint,_state["opening"]["definition"]["temple_footprint_rules"],source_raw_height_at)==0
@@ -2497,6 +3087,7 @@ func finish_source_shrine(id: int) -> String:
 		var site := source_shrine_site(home["shrine_id"])
 		if site.get("repaired",false): return ""
 		site["repaired"]=true
+		AstariRaids.shrine_repaired(_state,site["id"])
 		_state["progression"]["revision"]+=1
 		for follower: Dictionary in _state["followers"]:
 			if home.get("ark_crew",{}).has(str(follower["id"])):
@@ -2517,9 +3108,14 @@ func dwelling_count() -> int:
 
 
 func begin_promised_abode(plot: Dictionary,builder_id: int=-1) -> bool:
+	var plan:=plan_promised_abode(plot,builder_id)
+	return not plan.is_empty() and start_promised_abode(plan)
+
+
+func plan_promised_abode(plot: Dictionary,builder_id: int=-1,leashed: Array=[]) -> Dictionary:
 	var story: Dictionary=_state["opening"]["definition"]
 	var first: bool=_state["homes"].is_empty()
-	if plot.is_empty() or not story.has("first_abode_model") or (not first and builder_id<0): return false
+	if plot.is_empty() or not story.has("first_abode_model") or (not first and builder_id<0 and leashed.is_empty()): return {}
 	var unlocked := func(key: String) -> bool: return preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],key)
 	var ground := func(x: float,z: float) -> float: return preload("res://simulation/source_terrain.gd").surface_height(source_raw_height_at(x,z))
 	var tent_index := -1
@@ -2531,18 +3127,19 @@ func begin_promised_abode(plot: Dictionary,builder_id: int=-1) -> bool:
 	var random := RandomNumberGenerator.new()
 	random.state=_random.state
 	var request := preload("res://simulation/source_plot_conversion.gd").request(plot,0,0,false,false,existing,story["house_selection"],story["plot_environment"],story["plot_conversion_rules"],unlocked,ground,random.randi)
-	if request.is_empty(): return false
+	if request.is_empty(): return {}
 	var source_id: String=story["house_selection"][request["index"]]["id"]
 	var definition := {"model_id":story["first_abode_model"],"values":story["first_abode_values"]["values"],"name":story["first_abode_values"]["raw"]["House Name"]}
 	if source_id!="AbodeType_0_Rank_1":
-		if not (Opening.supports_timeline_housing(_state["opening"]) or Opening.supports_shrine_housing(_state["opening"]) or Opening.supports_discovery(_state["opening"])): return false
+		if not (Opening.supports_timeline_housing(_state["opening"]) or Opening.supports_shrine_housing(_state["opening"]) or Opening.supports_discovery(_state["opening"])): return {}
 		if source_id==story["mud_hut"]["source_id"]: definition=story["mud_hut"]
 		elif source_id=="AbodeType_1_Rank_2": definition=story.get("mud_lodge",{})
+		elif source_id=="AbodeType_1_Rank_3": definition=story.get("beach_lodge",{})
 		elif source_id.begins_with("StoneHouse_"): definition=story.get("stone_abodes",{}).get(source_id,{})
 		else: definition=story.get("wooden_abodes",{}).get(source_id,{})
-		if definition.is_empty(): return false
+		if definition.is_empty(): return {}
 	var wheat:=source_abode_wheat_cost(plot)
-	if wheat>int(_state.get("wheat",0)): return false
+	if wheat>int(_state.get("wheat",0)): return {}
 	var values: Dictionary=definition["values"]
 	var center: Array=request["position"]
 	var span := int(values["base size"])
@@ -2552,25 +3149,38 @@ func begin_promised_abode(plot: Dictionary,builder_id: int=-1) -> bool:
 	var routes: Array=[]
 	var reserved := {}
 	var slots := int(story["promised_steps"][2]["build_capacity"] if first else values["build capacity"])
-	for follower: Dictionary in _state["followers"]:
+	if leashed.size()>slots: return {}
+	var candidates: Array=_state["followers"] if leashed.is_empty() else leashed
+	for follower: Dictionary in candidates:
 		if routes.size()>=slots: break
-		if follower["state"]=="indoors" or builder_id>=0 and follower["id"]!=builder_id: continue
+		if leashed.is_empty() and (follower["state"]=="indoors" or builder_id>=0 and follower["id"]!=builder_id): continue
 		var start := Vector2i(roundi(follower["x"]),roundi(follower["z"]))
-		var approach := _promised_abode_approach(start,footprint,reserved)
+		var approach := _promised_abode_approach(start,footprint,reserved,not leashed.is_empty())
 		if approach.is_empty(): continue
 		reserved[approach["target"]]=true
 		routes.append({"follower":follower,"path":approach["path"],"target":approach["target"]})
-	if routes.is_empty(): return false
-	if not preload("res://simulation/source_plot_conversion.gd").release_plot(_state["source_plots"],int(plot["id"]),true,false): return false
-	if wheat>0: _state["wheat"]-=wheat
-	_random.state=random.state
+	if routes.is_empty() or not leashed.is_empty() and routes.size()!=leashed.size(): return {}
+	return {"plot":plot["id"],"request":request,"definition":definition,"source_id":source_id,"wheat":wheat,
+		"footprint":footprint,"routes":routes,"slots":slots,"rng":random.state}
+
+
+func start_promised_abode(plan: Dictionary) -> bool:
+	if not preload("res://simulation/source_plot_conversion.gd").release_plot(_state["source_plots"],plan["plot"],true,false): return false
+	if plan["wheat"]>0: _state["wheat"]-=int(plan["wheat"])
+	_random.state=plan["rng"]
+	var definition: Dictionary=plan["definition"]
+	var values: Dictionary=definition["values"]
+	var request: Dictionary=plan["request"]
+	var center: Array=request["position"]
+	var footprint: Rect2i=plan["footprint"]
+	var routes: Array=plan["routes"]
 	var id: int=_state["next_id"]
 	_state["next_id"]+=1
 	var work: Vector2i=routes[0]["target"]
 	var duration:=Economy.build_ticks(_state,{"build_ticks":roundi(float(values["build time"])/TICK_SECONDS),"rank":definition.get("rank",1)})
-	_state["homes"].append({"id":id,"model_id":definition["model_id"],"name":definition["name"],"family":definition.get("family",2 if definition.has("rank") else 0),"rank":definition.get("rank",1),"source_house":source_id,"source_index":request["index"],"script_abode_type":definition.get("script_type",0),
-		"x":x,"z":z,"anchor_x":center[0],"anchor_z":center[1],"rotation":rad_to_deg(center[3]),"span":span,
-		"capacity":int(values["capacity"]),"build_capacity":slots,"new_builder_contribution":values["new builder contribution"],
+	_state["homes"].append({"id":id,"model_id":definition["model_id"],"name":definition["name"],"family":definition.get("family",2 if definition.has("rank") else 0),"rank":definition.get("rank",1),"source_house":plan["source_id"],"source_index":request["index"],"script_abode_type":definition.get("script_type",0),
+		"x":footprint.position.x,"z":footprint.position.y,"anchor_x":center[0],"anchor_z":center[1],"rotation":rad_to_deg(center[3]),"span":footprint.size.x,
+		"capacity":int(values["capacity"]),"build_capacity":plan["slots"],"new_builder_contribution":values["new builder contribution"],
 		"vision_radius":values["visionradius"],"belief_modifier":values["belief modifier"],"belief_multiplier":values["belief multiplier per peep in house"],
 		"breeder_count":int(values["breeder count"]),"birth_ticks":roundi(float(values["birth rate"])/TICK_SECONDS),
 		"build_ticks":duration,"progress":0,"stored":0,"residents":0,"min_belief":int(values["min belief"]),"max_belief":int(values["max belief"]),
@@ -2581,6 +3191,7 @@ func begin_promised_abode(plot: Dictionary,builder_id: int=-1) -> bool:
 		var target: Vector2i=route["target"]
 		follower.merge({"job":id,"work_x":target.x,"work_z":target.y,"path":route["path"],"state":"walking","entering_home":id},true)
 		follower.erase("seeking_plot")
+		follower.erase("leash_goal")
 	return true
 
 
@@ -2649,10 +3260,38 @@ func has_room_for_growth(reserved: int=0) -> bool:
 	return Opening.supports_discovery(_state["opening"]) or dwelling_count()+reserved<promised_home_limit()
 
 
+func source_growth_options() -> Dictionary:
+	var seeking := 0
+	for follower: Dictionary in _state["followers"]:
+		if follower.get("seeking_plot",false): seeking+=1
+	var plots: Array=[]
+	if not _state["homes"].is_empty() and has_room_for_growth(seeking):
+		var stock: int=_state.get("wheat",0)
+		for plot: Dictionary in promised_growth_plots():
+			if source_abode_wheat_cost(plot)<=stock: plots.append(plot)
+	return {"seeking":seeking,"plots":plots}
+
+
+func source_release_has_plot(builder: Dictionary,options: Dictionary) -> bool:
+	if options.is_empty(): options=source_growth_options()
+	var origin:=Vector2i(roundi(builder["x"]),roundi(builder["z"]))
+	var seeking: int=options["seeking"]
+	for plot: Dictionary in options["plots"]:
+		if not promised_plot_reachable(plot,origin): continue
+		if seeking==0: return true
+		seeking-=1
+	return false
+
+
 func promised_plot_reachable(plot: Dictionary,origin: Vector2i) -> bool:
 	var size := int(plot["size"])
 	var footprint := Rect2i(int(plot["x"]),int(plot["z"]),size,size)
-	return not _promised_abode_approach(origin,footprint,{}).is_empty()
+	refresh_spatial()
+	var key: Array=[origin,footprint]
+	if _plot_reachability.has(key): return _plot_reachability[key]
+	var reachable:=not _promised_abode_approach(origin,footprint,{}).is_empty()
+	if _plot_reachability.size()<4096: _plot_reachability[key]=reachable
+	return reachable
 
 
 func growth_plots_from(origin: Vector2) -> Array:
@@ -2708,6 +3347,16 @@ func advance_promised_abode(wait_to_enter: bool=false) -> Array:
 	if not construction.is_empty(): _advance_construction()
 	var use_assigned_entrance: bool=Opening.supports_growth(_state["opening"]) or Opening.supports_timeline_housing(_state["opening"]) or _state["opening"]["phase"] in ["shrine","discovery"]
 	var fallback: int=-1 if use_assigned_entrance else _state["homes"].back()["id"]
+	var entrants := {}
+	if not wait_to_enter:
+		for follower: Dictionary in _state["followers"]:
+			if follower["state"]=="indoors" or follower.has("swamp_entered"): continue
+			if int(follower.get("arrow_stun_until",0))>int(_state["tick"]): continue
+			var destination: int=follower.get("entering_home",fallback)
+			if destination<0: continue
+			if not entrants.has(destination): entrants[destination]=[]
+			entrants[destination].append(follower)
+	var capacity := Capacity.effects(_state,source_raw_height_at) if not entrants.is_empty() else {}
 	for home: Dictionary in _state["homes"]:
 		if home["progress"]<home["build_ticks"]: continue
 		if construction.has(home["id"]):
@@ -2715,8 +3364,8 @@ func advance_promised_abode(wait_to_enter: bool=false) -> Array:
 			continue
 		if wait_to_enter: continue
 		var entrance := Vector2i(home["work_x"],home["work_z"])
-		for follower: Dictionary in _state["followers"]:
-			if follower["state"]=="indoors" or follower.get("entering_home",fallback)!=home["id"] or home["residents"]>=home["capacity"]: continue
+		for follower: Dictionary in entrants.get(home["id"],[]):
+			if home["residents"]>=Capacity.capacity(home,capacity): break
 			var position := Vector2(follower["x"],follower["z"])
 			if position.distance_to(Vector2(entrance))<0.01:
 				follower["state"]="indoors"
@@ -2748,8 +3397,10 @@ func advance_promised_breeding() -> void:
 		if follower.has("away_home"):
 			var home_id := int(follower["away_home"])
 			away[home_id]=int(away.get(home_id,0))+1
+	var capacity := Capacity.effects(_state,source_raw_height_at)
 	for home: Dictionary in _state["homes"]:
-		if home["progress"]<home["build_ticks"] or home["residents"]<=0 or home["residents"]+int(away.get(home["id"],0))>=home["capacity"] or home.get("breed_locked",false): continue
+		if home["progress"]<home["build_ticks"] or home["residents"]<=0 or home.get("breed_locked",false): continue
+		if home["residents"]+int(away.get(home["id"],0))>=Capacity.capacity(home,capacity): continue
 		var elapsed := int(home.get("breed_ticks",0))+1
 		home["breed_ticks"]=elapsed
 		if elapsed<preload("res://simulation/building_stats.gd").authored_birth_interval(_state,home): continue
@@ -3006,6 +3657,7 @@ func migrate_progression(rules: Dictionary,rocks: PackedByteArray) -> void:
 					shrine["z"]=previous["z"]
 	_state["progression"]=updated
 	Immutable.freeze(_state["progression"]["rules"])
+	_index_shrine_foundations()
 	Weyworld.initialize(self,_state)
 	var footprint_changed := false
 	for home: Dictionary in _state["homes"]:
@@ -3209,6 +3861,7 @@ func reconfigure(changes: Array) -> Dictionary:
 	_state["runtime"]=Progression.canonical_numbers(runtime)
 	_state["progression"]["rules"]=Immutable.freeze(Progression.canonical_numbers(rules))
 	_house_specs.clear()
+	_abode_tree_stamp=Vector3i(-1,-1,-1)
 	rules=_state["progression"]["rules"]
 	if influence_changed and _state.has("source_influence"):
 		var unlocked := func(key: String) -> bool: return preload("res://simulation/source_unlocks.gd").enabled(_state["progression"],key)
@@ -3252,6 +3905,7 @@ func reconfigure(changes: Array) -> Dictionary:
 		agent["max_health"]=float(stats.get("MaxHealth",100))
 		agent["health"]=minf(float(agent.get("health",agent["max_health"])),agent["max_health"])
 		agent["scale"]=float(stats.get("Scale",1))
+	if _state.has("opening"): AstariRaids.refresh_stats(self,_state)
 	Progression.refresh(_state)
 	Influence.refresh(_state)
 	if influence_changed and rules.has("registered_scope"): Economy.fill_free_harvest(_state)
@@ -3264,11 +3918,14 @@ func query_copy() -> RefCounted:
 	# thread while the authoritative world advances on its worker.
 	var copy: RefCounted=get_script().new()
 	copy._state=detached_state(false)
+	copy._scenery_snapshot=shared_trees()
+	copy._state["trees"]=copy._scenery_snapshot
 	copy._models=_models if _models.is_read_only() else _models.duplicate(true)
 	copy._tree_cells=_tree_cells # Immutable index shared by detached query owners.
 	copy._tree_coast=_tree_coast
 	copy._tree_rows=_tree_rows
 	copy._tree_tiles=_tree_tiles
+	copy._shrine_foundations=_shrine_foundations
 	copy._dry_land=_dry_land
 	copy._random=RandomNumberGenerator.new()
 	copy._random.seed=_random.seed
@@ -3307,4 +3964,7 @@ func migrate_rocks(original_heights: PackedByteArray,source_field: PackedByteArr
 
 
 func follower_values(agent: Dictionary) -> Dictionary:
-	return _state.get("progression",{}).get("rules",{}).get("followers",{}).get(str(agent.get("race","Brown Head")),{})
+	var race: String=agent.get("race","Brown Head")
+	var values: Dictionary=_state.get("progression",{}).get("rules",{}).get("followers",{}).get(race,{})
+	if race=="Astari" and values.is_empty(): return Astari.rules_for(_state).get("actor_stats",{})
+	return values

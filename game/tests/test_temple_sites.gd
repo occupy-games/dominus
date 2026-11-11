@@ -154,10 +154,19 @@ func run() -> void:
 		screen.building_panel.popup.show()
 	var builds: int=screen.world_view.building_batches.builds
 	var changed := state.duplicate(true)
+	var foundation_cell := 18 * int(state["width"]) + 18
 	changed["progression"]["shrines"][0]["source_height"]=22
+	changed["terrain"][foundation_cell]=3
+	changed["terrain_revision"]+=1
 	screen.world_view.apply_snapshot(changed)
-	check(is_equal_approx(screen.world_view.home_nodes[state["homes"][0]["id"]].position.y,3*preload("res://presentation/world/terrain_view.gd").STEP),"Restored site elevation must reach the completed temple anchor")
+	check(is_equal_approx(repaired.position.y,3*preload("res://presentation/world/terrain_view.gd").STEP),"Restored supported site elevation must reach the completed temple anchor")
 	check(screen.world_view.building_batches.builds==builds+1,"Restored site elevation must update the completed instance transforms")
+	changed=changed.duplicate(true)
+	changed["terrain"][foundation_cell]=1
+	changed["terrain_revision"]+=1
+	screen.world_view.apply_snapshot(changed)
+	check(repaired.position==anchor,"A completed shrine in an undermined save must rest on the ground")
+	check(screen.world_view.building_batches.builds==builds+2,"Completed components must follow the grounded shrine anchor")
 	changed=state.duplicate(true)
 	changed["homes"][0]["model_id"]="unrecovered-temple"
 	screen.world_view.apply_snapshot(changed)

@@ -94,6 +94,14 @@ that identity on load for bathymetry and legacy migrations; presentation never
 chooses or changes authoritative terrain. Unsupported source maps have no
 start action.
 
+Homeworld6 keeps source seabed samples and sparse submerged edits alongside
+its nonnegative walking heights. The sculpt command uses the source shallow
+floor and underwater belief curve. Sculpt the Oceans is discovered at 440
+followers and its completed Faith recipe enables the full depth. Wet-only
+edits advance a bathymetry revision for the water shader and update the raw
+surface sampled by authored chests. Dry terrain changes advance the topology
+revision. The same validated edits drive both gesture previews.
+
 Weyworld's direct start binds the source version table to the Homeworld7 map.
 Infrastructure supplies its scoped research, currencies, chest and temple
 sites, and influence areas. Simulation applies the original quantized circle
@@ -168,6 +176,20 @@ spending at two player-built fields. Ordinary abode construction quotes the
 original plot cost before reserving a Builder and debits wheat when construction
 starts. Source settlement coverage waives the quote. The original rank modifier
 reduces the duration of abode construction after the card is claimed.
+
+Homeworld6 offers the Shrine of Capacity at 360 followers. Typed research
+unlocks its source placement prices and wheat and gem upgrades. Simulation
+applies a single capacity modifier to each qualifying abode, including the
+original settlement-affiliation check. Birth, entry, settlement compression,
+and the Info window share that occupancy limit. Saves retain placements and
+upgrade flags. Presentation resolves the original shrine assembly and cards.
+
+Homeworld6 discovers Swamp at 400 followers. The original Miracle debit,
+terrace-local spread, descending puddle footprints and race damage are
+simulation rules. The authored casts and player casts share the source
+blight field and save their remaining lifetime. Active puddles affect plot
+eligibility and shrine repair. Presentation reads the blight field through
+the original gradient and plays the recovered cast sound and follower clips.
 
 The original final-follower waiting and arrival callbacks run in the same pure
 interpreter. A config-backed day clock uses recovered native midday/sunset
@@ -391,6 +413,11 @@ composes influence, phase and exposure gates before mutation. Source bonus,
 availability and mode gates remain separate from the reward service's actual
 redemption. Saved active arrays validate unique identities and restore typed
 core data, so continuing at a timer boundary cannot repeat a dispatched reward.
+Chest snapshots supply the actionable surface height and burial depth for the
+original `UI_TreasureCards_Spot` effect. Presentation owns the visible chest's
+glint clock and particle playback. It uses the source four-to-eight-second
+interval, surface offset, `Misc.png` frame and emitter curves without consuming
+the simulation's RNG or changing excavation or opening eligibility.
 `source_availability.gd` owns the original stock/lifetime capacity and acquired
 and owned counts in six plain tables. Missing limits initialize the native
 default and emit diagnostic intents; an unknown key is not an existence test.
@@ -833,8 +860,11 @@ unavailable or removed saved sites cannot retain old meshes or invisible click
 targets. Completed construction batches keep their existing selection anchors.
 The compatibility director fills existing shrine jobs and queues affordable,
 clear, reachable shrine repairs before new housing. It uses the recovered site
-dimensions rather than shelter dimensions, reserves approach space and keeps
-authored elevation fixed. Covering trees, rocks and ordinary buildings intercept
+dimensions, reserves approach space and keeps the authored repair elevation.
+Sculpting can remove cover down to a shrine's foundation and preserves the land
+under an active totem. The view clamps shrine anchors to the ground if a saved
+edit has removed their support. Voyage shrines follow terrain in each snapshot.
+Covering trees, rocks and ordinary buildings intercept
 shrine picking; buried terrain reaches sculpting. Original clearing powers take
 priority over inspection and validate the selected covering house ID. Saved
 repair footprint migration preserves progress and payment while releasing stale
@@ -850,8 +880,10 @@ preserves saved CSV balance alongside mutable economy and reward state.
 Currency milestone intervals and tribe happiness are simulation snapshots.
 The HUD draws the original atlas regions and positions the markers from those
 values. Corner background opacity, layout and number abbreviation belong to
-presentation. Happiness currently includes source starting values and passive
-decay; this does not implement Astari festivals or full tribal society.
+presentation. Homeworld6 persists village residents, festival timing and tribe
+happiness. The festival result changes allegiance using the source conversion
+rules. Village ownership and the Ark beacon depend on the surviving rival
+population, including archers.
 
 Terrain topology, surface height, valid building plots and follower routes are
 simulation data. Godot meshes, collision shapes and navigation visualizations
@@ -909,14 +941,13 @@ Normal runs retain their existing save locations.
 
 ## Presentation streaming
 
-Application freezes a detached copy of static scenery once per loaded world.
-Later snapshots reuse that immutable array; mutable simulation state still gets
-copied at each boundary. Terrain height arrays use copy-on-write value semantics.
-Tree positions and variants also stay shared while a sparse, detached removal
-mask records player clearing. Simulation rejects obstructed construction and
-owns clearing taps/rewards; a shared immutable cell index lets query owners
-validate the same plots without copying the forest. The renderer invalidates
-only the affected tree tile, retaining pending invalidations across snapshots.
+Simulation publishes a detached, immutable tree layout on world load or
+planting. Application reuses that layout between changes. Terrain height arrays
+use copy-on-write value semantics. A sparse, detached removal mask records
+player clearing. Simulation owns placement, clearing and plot obstruction.
+Query owners share the immutable layout and cell index. The renderer
+invalidates affected tree tiles and retains pending invalidations across
+snapshots.
 Presentation builds terrain mesh arrays on a worker thread from detached height
 data, then installs mesh resources on the main thread. Tile caches and detail
 levels affect rendering only. Workers never access live simulation objects.
@@ -928,6 +959,22 @@ provenance rather than runtime memory. Simulation expands only dry tree cells
 for the older campaigns. The private source opening uses recovered native initial
 instances instead, preserving fractional positions and sampled dry coastal trees
 whose integer root is water.
+Holy Forest uses the source population gate, Belief charge and seeded tree
+choice. Saved planting ticks drive emergence in presentation. Simulation
+samples planted and ordinary trees separately for building modifiers and
+applies the two purchased harvest upgrades to fields and mines.
+Homeworld6 discovers Finger of God at 325 followers. Simulation owns its
+armed window, contact prices, repeated settlement taps, scenery damage,
+and the references released when a building comes down. The original
+cursor mesh, tree tint and bank event consume detached state and events.
+The Finger of God unlock also starts the Homeworld6 Astari raid timer.
+Simulation persists the last repaired expansion beacon, raid countdown,
+scout routes and combat state. Archers use the authored action phases and
+resolve arrows against exposed followers. Presentation loads the original
+skinned mask, bows, arrows and action clips when raiders first appear.
+Festival performers use original civilian meshes, masks and clips. The village
+compound retains its authored block layout in simulation. Its assembled view
+and the rival tribe's production AI remain unavailable.
 Model metadata is loaded independently of the full media-library catalog and
 sealed once by infrastructure. Simulation seals its own plain model definitions
 and rule tables recursively. Snapshots/query copies share only those immutable

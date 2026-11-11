@@ -58,6 +58,9 @@ var width_choice: OptionButton
 var selected_home: Variant = -1
 var belief_sweep := false
 var rain_held := false
+var finger_held := false
+var meteor_swipe_started := -1
+var meteor_swipe_origin := Vector2.ZERO
 var belief_sweep_start := Vector2.ZERO
 var belief_sweep_seen: Dictionary = {}
 var drag: Dictionary = {}
@@ -130,6 +133,7 @@ func _ready() -> void:
 	world_view.pointer_dragged.connect(on_pointer_dragged)
 	world_view.pointer_released.connect(end_belief_sweep)
 	world_view.pointer_released.connect(release_lesson_leash)
+	world_view.pointer_released.connect(func() -> void: release_meteor(world_view.pointer_screen))
 	world_view.pointer_released.connect(func() -> void: farm_dragging=false)
 	world_view.observer_changed.connect(func(observation: Dictionary) -> void: intent.emit(observation))
 	build_hud()
@@ -323,7 +327,7 @@ func build_campaign_hud() -> void:
 			intent.emit({"type":"campaign_farm_card"})
 		elif id=="Card_GrainToBuild" and snapshot.get("opening",{}).get("superfast_step")==0:
 			intent.emit({"type":"claim_card","card":id})
-		elif id=="Card_Adv_Fountain" and inspect_action.call({"type":"claim_card","card":id}).get("ok",false):
+		elif id in ["Card_Adv_Fountain","Card_Adv_GodSeed_1"] and inspect_action.call({"type":"claim_card","card":id}).get("ok",false):
 			intent.emit({"type":"claim_card","card":id})
 		elif not request_timeline() and not request_level_card(): progression_panel.open_card(id))
 	hud.collection_requested.connect(func() -> void:
@@ -345,8 +349,10 @@ func build_campaign_hud() -> void:
 	add_child(progression_panel)
 	progression_panel.visibility_changed.connect(func() -> void:
 		var opening: Dictionary=snapshot.get("opening",{})
-		if not progression_panel.visible and (opening.get("promised_step")==8 or opening.get("shrine_step")==1 or opening.get("belief_step")==1 or opening.get("pit_card_open",false) or opening.get("dock_card_open",false) or opening.get("fountain_card_open",false) or opening.get("farming_step")==1 or opening.get("superfast_step")==1 or opening.get("leash_step")==1 and not opening.get("leash_mission_pending",false)):
-			intent.emit({"type":"campaign_dismiss_level_card"}))
+		if not progression_panel.visible and (opening.get("promised_step")==8 or opening.get("shrine_step")==1 or opening.get("belief_step")==1 or opening.get("pit_card_open",false) or opening.get("dock_card_open",false) or opening.get("fountain_card_open",false) or opening.get("god_seed_step")==1 or opening.get("farming_step")==1 or opening.get("superfast_step")==1 or opening.get("leash_step")==1 and not opening.get("leash_mission_pending",false)):
+			intent.emit({"type":"campaign_dismiss_level_card"})
+		if not progression_panel.visible and (opening.get("capacity_step")==2 or opening.get("capacity_step")==1 and progression_panel.selected=="Card_Capacity_1"):
+			intent.emit({"type":"campaign_capacity_card_closed"}))
 	powers_panel = preload("res://presentation/world/progression_panel.gd").new()
 	powers_panel.mode="powers"
 	powers_panel.cards=campaign_cards
@@ -355,6 +361,9 @@ func build_campaign_hud() -> void:
 	powers_panel.command_requested.connect(func(command: Dictionary) -> void: intent.emit(command))
 	powers_panel.power_requested.connect(select_power)
 	add_child(powers_panel)
+	powers_panel.visibility_changed.connect(func() -> void:
+		if not snapshot.get("opening",{}).get("finger_status",{}).is_empty():
+			intent.emit({"type":"campaign_finger_menu","show":powers_panel.visible}))
 	# Controller fields used by keyboard/picking; these are not campaign HUD.
 	var internal := Control.new()
 	internal.visible = false
@@ -390,9 +399,12 @@ func build_campaign_hud() -> void:
 
 func choose_tool(value: String) -> void:
 	cancel_drag()
+	meteor_swipe_started=-1
 	if value == "collect":
 		intent.emit({"type": "collect"})
 		return
+	if value!=tool: cancel_god_seed_hint()
+	if value!=tool: cancel_finger()
 	tool = value
 	selected_home = -1
 	selected_building_kind="home"
@@ -419,12 +431,13 @@ func apply_snapshot(data: Dictionary, events: Array = []) -> void:
 	var timeline_was_open: bool=snapshot.get("opening",{}).get("timeline_open",false)
 	snapshot = data
 	world_view.apply_snapshot(data)
+	world_view.finger_preview=tool=="GodPower_FingerOfGod" and data.get("opening",{}).get("finger_status",{}).get("active",false)
 	audio.set_rain_active(rain_held and not is_paused and data.get("opening",{}).has("rain_cast"))
 	if has_building_selection(): update_home_info()
 	if data.has("voyage"):
 		voyage_hud.apply_snapshot(data)
 		for event: Dictionary in events:
-			audio.play_event(event.get("event",event["type"]) if event["type"]=="source_sound" else event["type"])
+			play_simulation_sound(event)
 			if event["type"]=="voyage_alert": voyage_hud.hint.text=event["message"]
 		return
 	if data.has("leash_lesson"):
@@ -445,17 +458,23 @@ func apply_snapshot(data: Dictionary, events: Array = []) -> void:
 			else: progression_panel.hide()
 		elif timeline_was_open: progression_panel.hide()
 		for event: Dictionary in events:
-			audio.play_event(event.get("event",event["type"]) if event["type"]=="source_sound" else event["type"])
+			play_simulation_sound(event)
 			if event["type"]=="beautify_terrain" and tool=="GodPower_Beautify" and not is_paused: audio.beautify_contact()
 			if event["type"]=="campaign_camera": world_view.apply_campaign_camera(event)
 			if event["type"]=="campaign_pit_beam": world_view.play_pit_beam(event["site"])
+			if event["type"]=="campaign_finger_down": world_view.finger_view.strike(event)
+			if event["type"]=="campaign_meteor_impact": world_view.meteor_view.impact(event)
+			if event["type"]=="campaign_finger_ended" and tool=="GodPower_FingerOfGod":
+				finger_held=false
+				tool="sculpt"
+				choose_tool("sculpt")
 			if event["type"] in ["chest_opened","card_discovered","campaign_show_card"] and not str(event.get("card","")).is_empty(): progression_panel.open_card(event["card"])
 			elif event["type"]=="campaign_timeline_opened": progression_panel.open_card(event["card"])
 			elif event["type"]=="campaign_timeline_closed": progression_panel.hide()
 			elif event["type"]=="claim_card" and progression_panel.selected==event["card"] and not timeline_tutorial(data): progression_panel.visible=false
 			elif event["type"]=="use_power" and tool==event.get("power","") and tool.begins_with("GodPower_PlaceSettlement_"): choose_tool("sculpt")
 			elif event["type"]=="use_power" and tool=="GodPower_PlaceGiftFountain" and tool==event.get("power",""): choose_tool("sculpt")
-			elif event["type"]=="use_power" and tool=="GodPower_PlaceBeliefCollect" and tool==event.get("power",""): choose_tool("sculpt")
+			elif event["type"]=="use_power" and tool in ["GodPower_PlaceBeliefCollect","GodPower_PlaceCapacity","GodPower_PlaceSpeed","GodPower_Swamp"] and tool==event.get("power",""): choose_tool("sculpt")
 			elif event["type"] in ["campaign_farm_confirm","campaign_builder_confirm","campaign_mining_confirm"]: choose_tool("sculpt")
 		return
 	population_label.text = "%d followers · %d sheep · %d%% happy" % [data["followers"].size(), data["sheep"].size(), data["happiness"]]
@@ -582,6 +601,14 @@ func tutorial_target(entry: Dictionary) -> Rect2:
 			if entry.get("group")=="SuperFast": return original_hud.resource_rows["wheat"]["bar"].get_global_rect()
 			return original_hud.belief_bar.get_global_rect()
 		"BeliefBtn": return original_hud.sculpt_button.get_global_rect()
+		"PowerSelectCard":
+			if powers_panel.visible and powers_panel.selected==entry.get("gui_info") and is_instance_valid(powers_panel.detail_card):
+				return powers_panel.detail_card.get_global_rect()
+			var icon: Control=original_hud.power_nodes.get("GodPower_FingerOfGod")
+			if is_instance_valid(icon): return icon.get_global_rect()
+		"BeliefActivePower":
+			var icon: Control=original_hud.power_nodes.get("GodPower_FingerOfGod")
+			if is_instance_valid(icon): return icon.get_global_rect()
 		"HappinessFace": return original_hud.happiness_gauge.get_global_rect()
 		"MultiBarResrc":
 			if int(entry.get("gui_info",-1))==1: return original_hud.resource_rows["wheat"]["bar"].get_global_rect()
@@ -641,6 +668,18 @@ func position_shrine_rewards() -> void:
 func on_action(cell: Vector2i, point: Vector2, shrine_cover: Dictionary={}) -> void:
 	end_belief_sweep()
 	if campaign_mode and (progression_panel.visible or powers_panel.visible): return
+	if tool=="GodPower_MeteorStrike" and not snapshot.get("opening",{}).get("meteor_status",{}).is_empty():
+		if not is_paused:
+			meteor_swipe_started=Time.get_ticks_msec()
+			meteor_swipe_origin=world_view.pointer_screen
+		return
+	if tool=="GodPower_FingerOfGod" and not snapshot.get("opening",{}).get("finger_status",{}).is_empty():
+		if is_paused or finger_held: return
+		var target := world_view.finger_point(point)
+		if target.x<0: return
+		finger_held=true
+		intent.emit({"type":"use_power","power":tool,"x":target.x,"z":target.y})
+		return
 	if snapshot.has("leash_lesson"):
 		if not is_paused: begin_lesson_leash(point)
 		return
@@ -752,9 +791,9 @@ func act_on_world(cell: Vector2i,point: Vector2,shrine_cover: Dictionary) -> voi
 			return
 		var object_command := world_view.progression_at(point)
 		if not object_command.is_empty():
-			if object_command["type"]=="inspect_belief_collector":
+			if str(object_command["type"]).begins_with("inspect_"):
 				selected_home=int(object_command["id"])
-				selected_building_kind="belief_collector"
+				selected_building_kind=str(object_command["type"]).trim_prefix("inspect_")
 				update_home_info()
 				building_panel.popup.show()
 			else: intent.emit(object_command)
@@ -821,7 +860,7 @@ func on_drag(point: Vector2) -> void:
 		audio.set_sculpting(true)
 	else:
 		audio.set_sculpting(false)
-		world_view.terrain.rebuild(snapshot,true)
+		world_view.clear_preview()
 
 
 func finish_drag() -> void:
@@ -899,12 +938,26 @@ func toast(value: String) -> void:
 	message_time = 5.0
 
 
+func play_simulation_sound(event: Dictionary) -> void:
+	if event.has("meteor_id"):
+		audio.play_meteor_event(event["event"],event["meteor_id"])
+	else:
+		audio.play_event(event.get("event",event["type"]) if event["type"]=="source_sound" else event["type"])
+
+
 func select_power(power: String) -> void:
 	if building_panel!=null: building_panel.popup.hide()
+	meteor_swipe_started=-1
 	if power=="GodPower_LandManipulation": choose_tool("sculpt")
 	elif power=="GodPower_TotemActivate": intent.emit({"type":"use_power","power":power})
 	else:
 		cancel_drag()
+		if power!=tool: cancel_god_seed_hint()
+		if power!=tool: cancel_finger()
+		if power=="GodPower_FingerOfGod" and not snapshot.get("opening",{}).get("finger_status",{}).is_empty():
+			var finger: Dictionary=snapshot["opening"]["finger_status"]
+			if not finger["affordable"] or is_paused: return
+			if not finger["active"]: intent.emit({"type":"campaign_finger_arm"})
 		tool=power
 		var farming: int=snapshot.get("opening",{}).get("farming_step",-1)
 		if power==FARM_POWER and farming==0:
@@ -914,6 +967,45 @@ func select_power(power: String) -> void:
 			intent.emit({"type":"campaign_farm_select"})
 		elif power in [BUILDER_POWER,MINING_POWER] and snapshot.has("opening"):
 			farm_point=Vector2i(world_view.pick(get_viewport_rect().size*0.5).round())
+		elif power=="GodPower_GodSeed" and snapshot.get("opening",{}).get("god_seed_step")==2:
+			intent.emit({"type":"campaign_god_seed_select"})
+		elif power=="GodPower_PlaceCapacity" and snapshot.get("opening",{}).get("capacity_step")==3:
+			intent.emit({"type":"campaign_capacity_select"})
+
+
+func cancel_god_seed_hint() -> void:
+	if tool=="GodPower_GodSeed" and snapshot.get("opening",{}).get("god_seed_step")==2:
+		intent.emit({"type":"campaign_god_seed_cancel"})
+
+
+func cancel_finger() -> void:
+	if tool!="GodPower_FingerOfGod" or snapshot.get("opening",{}).get("finger_status",{}).is_empty(): return
+	finger_held=false
+	world_view.finger_preview=false
+	world_view.finger_view.hide()
+	intent.emit({"type":"campaign_finger_cancel"})
+
+
+func release_finger() -> void:
+	if not finger_held: return
+	finger_held=false
+	intent.emit({"type":"campaign_finger_release"})
+
+
+func release_meteor(pointer: Vector2) -> void:
+	if meteor_swipe_started<0: return
+	var seconds:=float(Time.get_ticks_msec()-meteor_swipe_started)/1000.0
+	meteor_swipe_started=-1
+	if is_paused or tool!="GodPower_MeteorStrike" or not get_viewport_rect().has_point(pointer): return
+	if progression_panel.visible or powers_panel.visible or pause_panel.visible: return
+	var point:=world_view.pick(pointer)
+	if point.x<0.0: return
+	var direction: Vector3=world_view.camera.global_basis.x
+	var heading:=Vector2(direction.x,direction.z).normalized()
+	var drag:=pointer-meteor_swipe_origin
+	var viewport:=get_viewport_rect().size
+	intent.emit({"type":"use_power","power":tool,"x":point.x,"z":point.y,"seconds":seconds,
+		"viewport":[viewport.x,viewport.y],"drag":[drag.x,drag.y],"heading":[heading.x,heading.y]})
 
 
 func build_farm_controls() -> void:
@@ -981,9 +1073,7 @@ func update_farm_controls() -> void:
 	var center:=Vector2(draft.get("x",farm_point.x),draft.get("z",farm_point.y))
 	var rules: Dictionary=snapshot["progression"]["rules"]
 	var settlement: Dictionary=rules["economy"]["settlements"][tool]
-	var settlement_key: String={BUILDER_POWER:"builder_settlement",MINING_POWER:"mining_settlement"}.get(tool,"")
-	var radius_setting: String=snapshot["opening"]["definition"].get(settlement_key,{}).get("radius_setting","SettCompRadius1")
-	var radius: float=rules["economy_source"]["configuration"].get(radius_setting,settlement["radius"])
+	var radius: float=snapshot["opening"]["settlement_status"][tool]["radius"]
 	world_view.show_farming_preview(center,[] if draft.is_empty() else [settlement["model_id"],settlement["statue_id"]])
 	var points:=PackedVector2Array()
 	for index in range(49):
@@ -997,11 +1087,14 @@ func double_action(cell: Vector2i) -> void:
 		if tool=="sculpt":
 			cancel_drag()
 			intent.emit({"type":"dig","x":cell.x,"z":cell.y})
-		elif tool.begins_with("GodPower_"): on_action(cell,Vector2(cell))
+		elif tool.begins_with("GodPower_"):
+			var point := world_view.pick(world_view.pointer_screen) if tool=="GodPower_FingerOfGod" else Vector2(cell)
+			on_action(cell,point)
 
 
 func paint_power(cell: Vector2i) -> void:
 	if not is_paused and tool in ["GodPower_Beautify","GodPower_FingerOfGod","GodPower_RainOfPurity"] and (not campaign_mode or not progression_panel.visible and not powers_panel.visible):
+		if tool=="GodPower_FingerOfGod" and not snapshot.get("opening",{}).get("finger_status",{}).is_empty(): return
 		if tool=="GodPower_RainOfPurity" and snapshot.has("opening"):
 			if not rain_held: return
 			var point:=world_view.pick(world_view.pointer_screen)
@@ -1079,6 +1172,8 @@ func _process(delta: float) -> void:
 		else: advance_lesson_leash(delta)
 	if belief_sweep and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT): end_belief_sweep()
 	if rain_held and (is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or not get_window().has_focus()): end_rain()
+	if finger_held and (is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or not get_window().has_focus()): release_finger()
+	if meteor_swipe_started>=0 and (is_paused or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or not get_window().has_focus()): meteor_swipe_started=-1
 	message_time -= delta
 	if message_time <= 0:
 		message_label.text = ""
@@ -1093,6 +1188,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_LEFT and not event.pressed:
 		audio.finish_beautify()
 		end_rain()
+		release_finger()
 
 
 func lesson_follower_at(pointer: Vector2) -> int:
@@ -1245,6 +1341,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				selected_home=-1
 				building_panel.hide_selection()
 			elif world_view.layer_drag: cancel_drag()
+			elif tool in ["GodPower_GodSeed","GodPower_MeteorStrike"]: choose_tool("sculpt")
 			else: toggle_menu()
 
 
